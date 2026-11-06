@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminApi, api, Badge, ErrorBox, Skeleton, StaffLink as Link } from './common';
 import { Button } from './ui/button';
 import { buildSequence, validateSequence, type StopInput } from '@/lib/route-stops';
+import { travelHours } from '@/lib/utils';
 
 type Detail = {
   id: string;
@@ -14,7 +15,6 @@ type Detail = {
 type Catalog = { locations: { id: string; name: string }[] };
 
 const json = (v: unknown) => JSON.stringify(v);
-const hhmm = (m: number) => `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 
 type FareMatrix = {
   fullFare: number;
@@ -170,7 +170,7 @@ export function RouteStops({ id }: { id: string }) {
           {first.name} → {last.name}
         </h2>
         <p className="muted">
-          {d.route.distanceKm} km, {hhmm(d.route.durationMinutes)}. Passengers can ride any part of the route between two allowed stops, and a seat can be sold again on the legs left over.
+          {d.route.distanceKm} km, {travelHours(d.route.durationMinutes)}. Passengers can ride any part of the route between two allowed stops, and a seat can be sold again on the legs left over.
         </p>
         <div className="table-wrap">
           <table>
@@ -232,7 +232,7 @@ export function RouteStops({ id }: { id: string }) {
               <tr>
                 <td>{middle.length + 2}</td>
                 <td>{last.name} (destination)</td>
-                <td>{d.route.durationMinutes}</td>
+                <td>{travelHours(d.route.durationMinutes)}</td>
                 <td>{d.route.distanceKm}</td>
                 <td>No</td>
                 <td>Yes</td>

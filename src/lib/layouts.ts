@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
 import { ApiError } from './errors';
-import { gridSchema, TEMPLATES, validateLayout, compileSeats, diffLayouts, type Grid } from './seat-layout';
+import { gridSchema, TEMPLATES, validateLayout, compileSeats, countSeats, diffLayouts, type Grid } from './seat-layout';
 import type { Scope } from './admin';
 
 // Plain transaction: unique violations here are about names and versions, not seats.
@@ -64,7 +64,7 @@ export async function createLayout(scope: Scope, actorId: string, raw: unknown) 
         data: { operatorId, name: d.name, vehicleType: d.vehicleType },
       });
       const version = await t.seatLayoutVersion.create({
-        data: { layoutId: layout.id, version: 1, ...grid, seatCount: grid.cells.filter((c) => c.kind === 'seat').length, createdById: actorId },
+        data: { layoutId: layout.id, version: 1, ...grid, seatCount: countSeats(grid), createdById: actorId },
       });
       await t.auditLog.create({
         data: { actorId, operatorId, action: 'CREATE_LAYOUT', targetId: layout.id, details: { name: d.name, template: d.template ?? null } },
@@ -81,7 +81,7 @@ export async function createLayout(scope: Scope, actorId: string, raw: unknown) 
 /** Saves the editable draft, opening a new draft from the latest version when none exists. Never touches published history. */
 export async function saveDraft(scope: Scope, actorId: string, raw: unknown) {
   const d = draftSave.parse(raw);
-  const seatCount = d.grid.cells.filter((c) => c.kind === 'seat').length;
+  const seatCount = countSeats(d.grid);
   return tx(async (t) => {
     const layout = await t.seatLayout.findFirst({
       where: { id: d.layoutId, ...owned(scope) },

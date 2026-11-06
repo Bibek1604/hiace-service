@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-/** A layout is a rectangular grid per deck. Only `seat` cells become bookable inventory. */
-export const CELL_KINDS = ['seat', 'aisle', 'driver', 'door', 'toilet', 'luggage', 'empty'] as const;
+/** A layout is a rectangular grid per deck. Only seat-like cells become bookable inventory. */
+export const CELL_KINDS = ['seat', 'door-seat', 'aisle', 'driver', 'door', 'toilet', 'luggage', 'empty'] as const;
 export const SEAT_CATEGORIES = ['STANDARD', 'WINDOW', 'FRONT', 'SLEEPER', 'ACCESSIBLE', 'PREMIUM'] as const;
 export type CellKind = (typeof CELL_KINDS)[number];
 export type SeatCategory = (typeof SEAT_CATEGORIES)[number];
@@ -19,6 +19,11 @@ export const cellSchema = z.object({
   category: z.enum(SEAT_CATEGORIES).optional(),
 });
 export type Cell = z.infer<typeof cellSchema>;
+
+/** A door-seat is still passenger inventory; it simply shares its grid cell with a vehicle door. */
+export const isBookableSeat = (cell: Pick<Cell, 'kind'>) => cell.kind === 'seat' || cell.kind === 'door-seat';
+export const isDoorCell = (cell: Pick<Cell, 'kind'>) => cell.kind === 'door' || cell.kind === 'door-seat';
+export const countSeats = (grid: Pick<Grid, 'cells'>) => grid.cells.filter(isBookableSeat).length;
 
 export const gridSchema = z.object({
   rows: z.number().int().min(1).max(MAX_ROWS),
@@ -51,8 +56,8 @@ export function validateLayout(input: Grid): LayoutIssue[] {
     }
     at.set(key, c);
     if (c.kind === 'driver') drivers++;
-    if (c.kind === 'door') doors++;
-    if (c.kind !== 'seat') {
+    if (isDoorCell(c)) doors++;
+    if (!isBookableSeat(c)) {
       if (c.label || c.category)
         issues.push({ code: 'stray_seat_data', message: 'Only seats carry a label or category.', ...where });
       continue;
@@ -91,7 +96,7 @@ export function compileSeats(grid: Grid): CompiledSeat[] {
   const bad = validateLayout(grid);
   if (bad.length) throw new Error('Invalid layout: ' + bad[0].message);
   return grid.cells
-    .filter((c) => c.kind === 'seat')
+    .filter(isBookableSeat)
     .sort((a, b) => a.deck - b.deck || a.row - b.row || a.col - b.col)
     .map((c) => ({
       label: c.label!.toUpperCase(),
@@ -106,7 +111,7 @@ export function compileSeats(grid: Grid): CompiledSeat[] {
 export function autoLabel(grid: Grid): Grid {
   const cells = grid.cells.map((c) => ({ ...c }));
   const seats = cells
-    .filter((c) => c.kind === 'seat')
+    .filter(isBookableSeat)
     .sort((a, b) => a.deck - b.deck || a.row - b.row || a.col - b.col);
   const perRow = new Map<string, number>();
   const letterIndex = new Map<string, number>();

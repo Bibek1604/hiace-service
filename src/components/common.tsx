@@ -1,7 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { BusFront, ArrowRight, ShieldCheck, Ticket, Search, House, LogOut } from 'lucide-react';
+import { BusFront, ArrowRight, ShieldCheck, Ticket, Search, House, LogOut, ChevronLeft, BarChart3, BookOpen, CalendarClock, CarFront, CreditCard, FileText, LayoutDashboard, Map, Settings, UserRound, Users, WalletCards, History } from 'lucide-react';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Button } from './ui/button';
 import { InstallApp } from './pwa';
@@ -97,6 +98,16 @@ export function Sheet({
   );
 }
 const hidden = (p: string) => ['/admin', '/driver', '/staff'].some((x) => p.startsWith(x));
+/**
+ * The browser pathname can differ from the server pathname when a deployment or service worker
+ * rewrites a navigation. Defer pathname-only presentation until after hydration to keep the HTML stable.
+ */
+function useHydratedPathname() {
+  const pathname = usePathname();
+  const [path, setPath] = useState<string | null>(null);
+  useEffect(() => setPath(pathname), [pathname]);
+  return path;
+}
 function Logo({ site }: { site: SiteContent }) {
   return site.brand.logo ? (
     <img src={site.brand.logo} alt={site.brand.name} className="brand-logo" />
@@ -107,8 +118,8 @@ function Logo({ site }: { site: SiteContent }) {
   );
 }
 export function Header({ site }: { site: SiteContent }) {
-  const path = usePathname();
-  if (hidden(path)) return null;
+  const path = useHydratedPathname();
+  if (path && hidden(path)) return null;
   return (
     <>
       <header className={'header' + (path === '/' ? ' home-header' : '')}>
@@ -146,8 +157,8 @@ export function Header({ site }: { site: SiteContent }) {
   );
 }
 export function Footer({ site }: { site: SiteContent }) {
-  const path = usePathname();
-  if (path.startsWith('/admin') || path.startsWith('/driver')) return null;
+  const path = useHydratedPathname();
+  if (path && (path.startsWith('/admin') || path.startsWith('/driver'))) return null;
   const f = site.footer,
     t = site.copy.nav;
   return (
@@ -212,41 +223,50 @@ export function StaffShell({
   name: string;
   children: React.ReactNode;
 }) {
-  const links =
-    role === 'admin'
-      ? [
-          'dashboard',
-          'drivers',
-          'vehicles',
-          'seat-layouts',
-          'routes',
-          'fares',
-          'trips',
-          'bookings',
-          'payments',
-          'payment-qr',
-          'reports',
-          'tickets',
-          'website',
-          'settings',
-        ]
-      : ['profile', 'vehicles', 'routes', 'payment', 'schedule', 'trips', 'bookings', 'passengers', 'history'];
+  const pathname = useHydratedPathname();
+  const [collapsed, setCollapsed] = useState(false);
+  const groups = role === 'admin'
+    ? [
+        { label: 'Overview', links: ['dashboard'] },
+        { label: 'Operations', links: ['drivers', 'vehicles', 'seat-layouts', 'routes', 'fares', 'trips', 'bookings', 'payments', 'payment-qr'] },
+        { label: 'Reports & settings', links: ['reports', 'tickets', 'website', 'settings'] },
+      ]
+    : [
+        { label: 'My workspace', links: ['profile', 'vehicles', 'routes', 'payment'] },
+        { label: 'Trip management', links: ['schedule', 'trips', 'bookings', 'passengers'] },
+        { label: 'Records', links: ['history'] },
+      ];
+  const labels: Record<string, string> = { 'seat-layouts': 'seat layouts', 'payment-qr': 'payment accounts', schedule: 'publish route' };
+  const icons: Record<string, React.ComponentType<{ size?: number }>> = {
+    dashboard: LayoutDashboard, drivers: Users, vehicles: CarFront, 'seat-layouts': LayoutDashboard, routes: Map, fares: WalletCards,
+    trips: CalendarClock, bookings: BookOpen, payments: CreditCard, 'payment-qr': CreditCard, reports: BarChart3, tickets: Ticket,
+    website: FileText, settings: Settings, profile: UserRound, payment: CreditCard, schedule: CalendarClock, passengers: Users, history: History,
+  };
   return (
-    <div className="staff-shell">
+    <div className={'staff-shell' + (collapsed ? ' sidebar-collapsed' : '')}>
       <aside>
-        <Link className="brand" href={'/' + role}>
+        <div className="sidebar-top">
+        <Link className="brand" href={'/' + role} aria-label="SajiloYatra home">
           <BusFront />
-          SajiloYatra
+          {!collapsed && <span>SajiloYatra<small>{role} portal</small></span>}
         </Link>
-        <p className="eyebrow">{role} workspace</p>
+        <button className="sidebar-collapse" type="button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed((value) => !value)}><ChevronLeft size={17} /></button>
+        </div>
         <nav>
-          {links.map((l) => (
-            <Link key={l} href={'/' + role + '/' + l}>
-              {l === 'schedule' ? 'publish route' : l.replaceAll('-', ' ')}
-            </Link>
-          ))}
+          {groups.map((group) => <section className="sidebar-group" key={group.label}>
+            {!collapsed && <p>{group.label}</p>}
+            {group.links.map((l, index) => {
+              const href = '/' + role + '/' + l;
+              const active = pathname === href || !!pathname?.startsWith(href + '/');
+              const Icon = icons[l] ?? FileText;
+              return <Link key={l} href={href} title={collapsed ? (labels[l] ?? l.replaceAll('-', ' ')) : undefined} className={active ? 'nav-active' : undefined} aria-current={active ? 'page' : undefined}>
+                <span className={'sidebar-icon tone-' + (index % 5)}><Icon size={17} /></span>
+                {!collapsed && <span>{labels[l] ?? l.replaceAll('-', ' ')}</span>}
+              </Link>;
+            })}
+          </section>)}
         </nav>
-        <small>{name}</small>
+        {!collapsed && <small className="sidebar-user">{name}<span>{role}</span></small>}
         <Button
           variant="outline"
           onClick={async () => {
@@ -255,7 +275,7 @@ export function StaffShell({
           }}
         >
           <LogOut size={16} />
-          Sign out
+          {!collapsed && 'Sign out'}
         </Button>
       </aside>
       <div className="staff-content">

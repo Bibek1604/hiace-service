@@ -305,6 +305,184 @@ const tripInput = z.object({
   boardingPoint: z.string().trim().max(250).optional(),
   dropPoint: z.string().trim().max(250).optional(),
 }).refine((value) => !!value.departure || !!value.departures?.length, 'Choose at least one departure date and time.');
+
+const schedulePlan = z.object({
+  routeId: z.string().min(1),
+  vehicleId: z.string().min(1),
+  paymentQRId: z.string().min(1),
+  departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour departure time.'),
+  fare: z.coerce.number().int().positive().max(10_000_000).optional(),
+  boardingPoint: z.string().trim().max(250).optional(),
+  dropPoint: z.string().trim().max(250).optional(),
+});
+const scheduleInput = z.object({
+  startsOn: z.string().date(),
+  endsOn: z.string().date(),
+  plans: z.array(schedulePlan).min(1).max(12),
+}).refine((value) => value.endsOn >= value.startsOn, 'End date must be on or after the start date.');
+const scheduleControl = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('pause') }),
+  z.object({ action: z.literal('resume') }),
+  z.object({ action: z.literal('cancel') }),
+  z.object({ action: z.literal('extend'), endsOn: z.string().date() }),
+]);
+
+const activeTripStatuses = ['SCHEDULED', 'BOARDING', 'DEPARTED'] as const;
+const dateRange = (startsOn: Date, endsOn: Date) => {
+  const out: string[] = [];
+  for (let cursor = new Date(startsOn.getTime()); cursor <= endsOn; cursor.setUTCDate(cursor.getUTCDate() + 1))
+    out.push(cursor.toISOString().slice(0, 10));
+  return out;
+};
+const nepalDeparture = (date: string, minutes: number) => {
+  const hour = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const minute = String(minutes % 60).padStart(2, '0');
+  return new Date(`${date}T${hour}:${minute}:00+05:45`);
+};
+const dayValue = (date: string) => new Date(`${date}T00:00:00.000Z`);
+
+async function assertTripWindowFree(driverId: string, vehicleId: string, departure: Date, arrival: Date) {
+  const clash = await db.trip.findFirst({
+    where: {
+      status: { in: [...activeTripStatuses] },
+      departure: { lt: arrival },
+      arrival: { gt: departure },
+      OR: [{ vehicleId }, { assignments: { some: { driverId, endedAt: null } } }],
+    },
+    select: { id: true },
+  });
+  if (clash) throw new ApiError(409, 'This vehicle or driver already has an overlapping trip.');
+}
+
+async function scheduleTrips(driverId: string, scheduleId: string, onlyAfter?: Date) {
+  const schedule = await db.tripSchedule.findUnique({
+    where: { id: scheduleId },
+    include: { route: { include: { origin: true, destination: true } } },
+  });
+  if (!schedule) throw new ApiError(404, 'Schedule not found.');
+  const dates = dateRange(schedule.startsOn, schedule.endsOn).filter((date) => {
+    const departure = nepalDeparture(date, schedule.departureMinutes);
+    return departure > new Date() && (!onlyAfter || departure > onlyAfter);
+  });
+  const candidates = dates.map((date) => {
+    const departure = nepalDeparture(date, schedule.departureMinutes);
+    return { date, departure, arrival: new Date(departure.getTime() + schedule.route.durationMinutes * 60000) };
+  });
+  for (const candidate of candidates)
+    await assertTripWindowFree(driverId, schedule.vehicleId, candidate.departure, candidate.arrival);
+  const created = [];
+  for (const { date, departure, arrival } of candidates) {
+    const existing = await db.trip.findFirst({ where: { scheduleId, departure }, select: { id: true } });
+    if (existing) continue;
+    created.push(
+      await save('trips', {
+        vehicleId: schedule.vehicleId,
+        routeId: schedule.routeId,
+        paymentQRId: schedule.paymentQRId,
+        driverId,
+        departure: departure.toISOString(),
+        arrival: arrival.toISOString(),
+        boardingPoint: schedule.boardingPoint || schedule.route.origin.name,
+        dropPoint: schedule.dropPoint || schedule.route.destination.name,
+        fare: schedule.fare,
+        bookingOpen: schedule.status === 'PUBLISHED',
+        bookingOpensAt: new Date().toISOString(),
+        bookingClosesAt: departure.toISOString(),
+        scheduleId,
+        recurringRule: JSON.stringify({ scheduleId, date }),
+        status: 'SCHEDULED',
+      }, driverId, false, schedule.operatorId),
+    );
+  }
+  return created;
+}
+
+/** Publish selected existing routes as independent daily trips without duplicating route records. */
+export async function createOwnSchedules(driverId: string, raw: unknown) {
+  const driver = await me(driverId);
+  const input = scheduleInput.parse(raw);
+  const startsOn = dayValue(input.startsOn), endsOn = dayValue(input.endsOn);
+  if (dateRange(startsOn, endsOn).length > 366) throw new ApiError(400, 'A schedule can cover at most 366 days.');
+  const batchId = crypto.randomUUID();
+  const schedules = [];
+  for (const plan of input.plans) {
+    const [route, vehicle, qr] = await Promise.all([
+      db.route.findFirst({ where: { id: plan.routeId, operatorId: driver.operatorId, active: true }, include: { origin: true, destination: true } }),
+      db.vehicle.findFirst({ where: { id: plan.vehicleId, operatorId: driver.operatorId, active: true } }),
+      db.paymentQR.findFirst({ where: { id: plan.paymentQRId, operatorId: driver.operatorId, active: true } }),
+    ]);
+    if (!route || !vehicle || !qr) throw new ApiError(400, 'Choose active routes, vehicles, and payment accounts that belong to you.');
+    const [hours, minutes] = plan.departureTime.split(':').map(Number);
+    const departureMinutes = hours * 60 + minutes;
+    const candidateDeparture = nepalDeparture(input.startsOn, departureMinutes);
+    const candidateArrival = new Date(candidateDeparture.getTime() + route.durationMinutes * 60000);
+    await assertTripWindowFree(driverId, vehicle.id, candidateDeparture, candidateArrival);
+    const schedule = await db.tripSchedule.create({
+      data: {
+        batchId,
+        operatorId: driver.operatorId,
+        driverId,
+        vehicleId: vehicle.id,
+        routeId: route.id,
+        paymentQRId: qr.id,
+        fare: plan.fare ?? route.baseFare,
+        departureMinutes,
+        startsOn,
+        endsOn,
+        boardingPoint: plan.boardingPoint || route.origin.name,
+        dropPoint: plan.dropPoint || route.destination.name,
+        status: 'PUBLISHED',
+      },
+    });
+    try {
+      const trips = await scheduleTrips(driverId, schedule.id);
+      schedules.push({ ...schedule, created: trips.length });
+    } catch (error) {
+      await db.tripSchedule.delete({ where: { id: schedule.id } });
+      throw error;
+    }
+  }
+  await db.auditLog.create({ data: { actorId: driverId, operatorId: driver.operatorId, action: 'PUBLISH_TRIP_SCHEDULES', targetId: batchId, details: { schedules: schedules.length, startsOn: input.startsOn, endsOn: input.endsOn } } });
+  return { batchId, schedules, created: schedules.reduce((total, schedule) => total + schedule.created, 0) };
+}
+
+export async function ownSchedules(driverId: string) {
+  const driver = await me(driverId);
+  return db.tripSchedule.findMany({
+    where: { driverId, operatorId: driver.operatorId },
+    include: { route: { include: { origin: true, destination: true } }, vehicle: { select: { name: true, registration: true } }, trips: { where: { departure: { gte: new Date() } }, select: { id: true, departure: true, status: true, bookings: { where: { status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } }, select: { id: true } } }, orderBy: { departure: 'asc' } } },
+    orderBy: { startsOn: 'asc' },
+    take: 100,
+  });
+}
+
+export async function controlOwnSchedule(driverId: string, scheduleId: string, raw: unknown) {
+  const driver = await me(driverId);
+  const input = scheduleControl.parse(raw);
+  const schedule = await db.tripSchedule.findFirst({ where: { id: scheduleId, driverId, operatorId: driver.operatorId } });
+  if (!schedule) throw new ApiError(404, 'Schedule not found.');
+  const future = { scheduleId, departure: { gt: new Date() }, status: 'SCHEDULED' as const };
+  if (input.action === 'pause') {
+    if (schedule.status !== 'PUBLISHED') throw new ApiError(409, 'Only published schedules can be paused.');
+    await db.$transaction([db.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'PAUSED' } }), db.trip.updateMany({ where: future, data: { bookingOpen: false } })]);
+  } else if (input.action === 'resume') {
+    if (schedule.status !== 'PAUSED') throw new ApiError(409, 'Only paused schedules can be resumed.');
+    await db.$transaction([db.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'PUBLISHED' } }), db.trip.updateMany({ where: future, data: { bookingOpen: true } })]);
+  } else if (input.action === 'extend') {
+    const endsOn = dayValue(input.endsOn);
+    if (endsOn <= schedule.endsOn) throw new ApiError(400, 'Choose a later end date.');
+    if (dateRange(schedule.startsOn, endsOn).length > 366) throw new ApiError(400, 'A schedule can cover at most 366 days.');
+    await db.tripSchedule.update({ where: { id: scheduleId }, data: { endsOn } });
+    try { await scheduleTrips(driverId, scheduleId, schedule.endsOn); } catch (error) { await db.tripSchedule.update({ where: { id: scheduleId }, data: { endsOn: schedule.endsOn } }); throw error; }
+  } else {
+    if (schedule.status === 'CANCELLED') throw new ApiError(409, 'This schedule is already cancelled.');
+    const booked = await db.trip.findFirst({ where: { ...future, bookings: { some: { status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } } } }, select: { id: true } });
+    if (booked) throw new ApiError(409, 'A future trip has bookings. Cancel it individually through admin so passengers are protected.');
+    await db.$transaction([db.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'CANCELLED' } }), db.trip.updateMany({ where: future, data: { status: 'CANCELLED', bookingOpen: false } })]);
+  }
+  await db.auditLog.create({ data: { actorId: driverId, operatorId: driver.operatorId, action: 'DRIVER_' + input.action.toUpperCase() + '_SCHEDULE', targetId: scheduleId, details: input } });
+  return ownSchedules(driverId);
+}
 /** A driver creates departures using their own approved-in-the-safety-sense (validated) resources. */
 export async function createOwnTrip(driverId: string, raw: unknown) {
   const d = await me(driverId);

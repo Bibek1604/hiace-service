@@ -7,6 +7,8 @@ import {
   CELL_KINDS,
   SEAT_CATEGORIES,
   autoLabel,
+  countSeats,
+  isBookableSeat,
   validateLayout,
   type Cell,
   type CellKind,
@@ -31,6 +33,7 @@ type LayoutDetail = {
 const json = (v: unknown) => JSON.stringify(v);
 const LABEL: Record<CellKind, string> = {
   seat: 'Seat',
+  'door-seat': 'Door + seat',
   aisle: 'Aisle',
   driver: 'Driver',
   door: 'Door',
@@ -190,13 +193,13 @@ export function SeatGridEditor({ grid, edit, header }: { grid: Grid; edit: (chan
     [deck, setDeck] = useState(0);
   const painting = useRef(false);
   const cells = useMemo(() => new Map(grid.cells.map((c) => [keyOf(c), c])), [grid]);
-  const seatCount = grid.cells.filter((c) => c.kind === 'seat').length;
+  const seatCount = countSeats(grid);
   const paint = (row: number, col: number) =>
     edit((g) => {
       const rest = g.cells.filter((c) => !(c.deck === deck && c.row === row && c.col === col));
       if (tool === 'empty') return { ...g, cells: rest };
       const cell: Cell = { deck, row, col, kind: tool };
-      if (tool === 'seat') cell.category = category;
+      if (tool === 'seat' || tool === 'door-seat') cell.category = category;
       return { ...g, cells: [...rest, cell] };
     });
   const resize = (key: 'rows' | 'cols' | 'decks', value: number) => {
@@ -209,7 +212,7 @@ export function SeatGridEditor({ grid, edit, header }: { grid: Grid; edit: (chan
   const relabel = (c: Cell, label: string) =>
     edit((g) => ({ ...g, cells: g.cells.map((x) => (keyOf(x) === keyOf(c) ? { ...x, label: label || undefined } : x)) }));
   const decks = Array.from({ length: grid.decks }, (_, i) => i);
-  const labelled = grid.cells.filter((c) => c.kind === 'seat');
+  const labelled = grid.cells.filter(isBookableSeat);
   return (
     <>
       <section className="card">
@@ -237,7 +240,7 @@ export function SeatGridEditor({ grid, edit, header }: { grid: Grid; edit: (chan
               {LABEL[k]}
             </Button>
           ))}
-          {tool === 'seat' && (
+          {(tool === 'seat' || tool === 'door-seat') && (
             <select aria-label="Seat category" value={category} onChange={(e) => setCategory(e.target.value as SeatCategory)}>
               {SEAT_CATEGORIES.map((c) => (
                 <option key={c}>{c}</option>
@@ -276,7 +279,7 @@ export function SeatGridEditor({ grid, edit, header }: { grid: Grid; edit: (chan
                   type="button"
                   key={i}
                   role="gridcell"
-                  aria-label={`Row ${row + 1}, column ${col + 1}: ${c ? (c.kind === 'seat' ? 'seat ' + (c.label ?? 'unlabelled') : c.kind) : 'empty'}`}
+                  aria-label={`Row ${row + 1}, column ${col + 1}: ${c ? (isBookableSeat(c) ? `${c.kind === 'door-seat' ? 'door and ' : ''}seat ${c.label ?? 'unlabelled'}` : c.kind) : 'empty'}`}
                   onPointerDown={(e) => {
                     e.currentTarget.releasePointerCapture?.(e.pointerId);
                     painting.current = true;
@@ -288,19 +291,19 @@ export function SeatGridEditor({ grid, edit, header }: { grid: Grid; edit: (chan
                     height: 52,
                     borderRadius: 8,
                     border: '1px solid var(--border, #cbd5e1)',
-                    background: !c ? 'transparent' : c.kind === 'seat' ? (c.label ? '#dcfce7' : '#fee2e2') : '#e2e8f0',
+                    background: !c ? 'transparent' : isBookableSeat(c) ? (c.label ? (c.kind === 'door-seat' ? '#fef3c7' : '#dcfce7') : '#fee2e2') : '#e2e8f0',
                     fontSize: 12,
                     cursor: 'pointer',
                   }}
                 >
-                  {c ? (c.kind === 'seat' ? c.label ?? '?' : LABEL[c.kind]) : ''}
+                  {c ? (isBookableSeat(c) ? c.kind === 'door-seat' ? `Door ${c.label ?? '?'}` : c.label ?? '?' : LABEL[c.kind]) : ''}
                 </button>
               );
             })}
           </div>
         </div>
         <p className="muted">
-          {seatCount} seats. Tap or drag to place the selected item. Red seats still need a label.
+          {seatCount} seats. “Door + seat” is a bookable seat at the same fare as other seats. Tap or drag to place the selected item. Red seats still need a label.
         </p>
       </section>
       {labelled.length > 0 && (

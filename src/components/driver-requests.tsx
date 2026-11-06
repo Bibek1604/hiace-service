@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, Badge, Empty, ErrorBox, Skeleton } from './common';
 import { Button } from './ui/button';
-import { money } from '@/lib/utils';
-import type { Cell, Grid } from '@/lib/seat-layout';
+import { money, travelHours } from '@/lib/utils';
+import { countSeats, isBookableSeat, type Cell, type Grid } from '@/lib/seat-layout';
 
 type Fields = Record<string, unknown>;
 type Request = {
@@ -34,7 +34,7 @@ const LABELS: Record<string, string> = {
   origin: 'Starting point',
   destination: 'Ending point',
   distanceKm: 'Distance (km)',
-  durationMinutes: 'Travel time (minutes)',
+  durationMinutes: 'Travel time (hours)',
   baseFare: 'Price, start to end',
   stops: 'Stops in between',
   vehicleType: 'Stop prices apply to',
@@ -63,6 +63,7 @@ function Value({ name, value }: { name: string; value: unknown }) {
     );
   }
   if (name === 'baseFare') return <>{money(Number(value))}</>;
+  if (name === 'durationMinutes') return <>{travelHours(Number(value))}</>;
   if (name === 'stops') return <>{(value as Stop[]).map(stopText).join(' → ') || 'None'}</>;
   if (name === 'legFares')
     return <>{(value as Leg[]).map((l) => `${l.from} → ${l.to}: ${money(l.amount)}`).join('; ') || 'Worked out from distance'}</>;
@@ -92,11 +93,11 @@ function SeatPreview({ grid }: { grid: Grid }) {
                     fontSize: 10,
                     display: 'grid',
                     placeItems: 'center',
-                    background: !c ? 'transparent' : c.kind === 'seat' ? '#dcfce7' : '#e2e8f0',
+                    background: !c ? 'transparent' : isBookableSeat(c) ? (c.kind === 'door-seat' ? '#fef3c7' : '#dcfce7') : '#e2e8f0',
                     color: '#0f172a',
                   }}
                 >
-                  {c ? (c.kind === 'seat' ? c.label : c.kind.slice(0, 3)) : ''}
+                  {c ? (isBookableSeat(c) ? c.kind === 'door-seat' ? `Door ${c.label}` : c.label : c.kind.slice(0, 3)) : ''}
                 </span>
               );
             })}
@@ -199,7 +200,7 @@ export function DriverRequests() {
                 </dl>
                 {grid ? (
                   <>
-                    <h3>Seat plan: {(grid as Grid).cells.filter((c) => c.kind === 'seat').length} seats</h3>
+                    <h3>Seat plan: {countSeats(grid as Grid)} seats</h3>
                     <SeatPreview grid={grid as Grid} />
                   </>
                 ) : null}

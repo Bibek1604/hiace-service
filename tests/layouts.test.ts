@@ -63,6 +63,17 @@ test('layout needs a door, at most one driver and some seats', () => {
   assert.deepEqual(validateLayout(twoDrivers).map((i) => i.code), ['many_drivers']);
 });
 
+test('a door-seat is bookable inventory and also satisfies the door requirement', () => {
+  const grid: Grid = {
+    rows: 1,
+    cols: 1,
+    decks: 1,
+    cells: [{ deck: 0, row: 0, col: 0, kind: 'door-seat', label: 'A1', category: 'STANDARD' }],
+  };
+  assert.deepEqual(validateLayout(grid), []);
+  assert.deepEqual(compileSeats(grid), [{ label: 'A1', row: 0, column: 0, deck: 0, category: 'STANDARD' }]);
+});
+
 test('upper and lower deck seats never share a stored position', () => {
   const seats = compileSeats(TEMPLATES.sleeper_2deck_28.build());
   assert.ok(seats.some((s) => s.deck === 1) && seats.some((s) => s.deck === 0));

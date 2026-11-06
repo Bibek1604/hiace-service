@@ -70,6 +70,7 @@ const shapes = {
     bookingOpensAt: z.iso.datetime().optional(),
     bookingClosesAt: z.iso.datetime().optional(),
     recurringRule: z.string().trim().max(300).optional(),
+    scheduleId: z.string().optional(),
     status: z
       .enum(['SCHEDULED', 'BOARDING', 'DEPARTED', 'COMPLETED', 'CANCELLED'])
       .default('SCHEDULED'),

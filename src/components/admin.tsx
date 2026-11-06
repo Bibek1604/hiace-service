@@ -6,8 +6,9 @@ import { Plus, CheckCircle2, Download, Search, X } from 'lucide-react';
 import { adminApi, api, Badge, ErrorBox, Sheet, Skeleton, StaffLink as Link, onForm } from './common';
 import { BookingDetail, TicketCheck, TripCancel } from './bookings';
 import { Button } from './ui/button';
+import { PasswordInput } from './ui/password-input';
 import { fields } from '@/lib/form-fields';
-import { money } from '@/lib/utils';
+import { money, travelHours } from '@/lib/utils';
 import type { TripView } from '@/lib/types';
 type Row = Record<string, unknown> & { id: string };
 type Choice = {
@@ -140,6 +141,8 @@ export function ResourceForm({
     }
     if (resource === 'routes' && record)
       v.stopIds = (record.stops as { locationId: string }[])?.map((s) => s.locationId) || [];
+    if (resource === 'routes' && v.durationMinutes !== undefined)
+      v.durationMinutes = Number(v.durationMinutes) / 60;
     if (resource === 'trips' && record)
       v.driverId = (record.assignments as { driverId: string }[])?.[0]?.driverId;
     for (const f of fields[resource] || []) {
@@ -223,6 +226,7 @@ export function ResourceForm({
         if (f.type === 'datetime-local' && value)
           value = new Date(String(value) + ':00+05:45').toISOString();
         if (f.type === 'number') value = Number(value);
+        if (resource === 'routes' && f.key === 'durationMinutes') value = Math.round(Number(value) * 60);
         if (value === '' && !f.required) continue;
         data[f.key] = value;
       }
@@ -350,14 +354,23 @@ export function ResourceForm({
                 </div>
               </>
             ) : (
-              <input
-                type={f.type === 'list' ? 'text' : f.type || 'text'}
-                required={f.required}
-                min={f.type === 'number' ? 1 : undefined}
-                value={str(values[f.key])}
-                autoComplete={f.type === 'password' ? 'new-password' : undefined}
-                onChange={(e) => change(f.key, e.target.value)}
-              />
+              f.type === 'password' ? (
+                <PasswordInput
+                  required={f.required}
+                  value={str(values[f.key])}
+                  autoComplete="new-password"
+                  onChange={(e) => change(f.key, e.target.value)}
+                />
+              ) : (
+                <input
+                  type={f.type === 'list' ? 'text' : f.type || 'text'}
+                  required={f.required}
+                  min={f.type === 'number' ? f.key === 'durationMinutes' ? 0.01 : 1 : undefined}
+                  step={f.key === 'durationMinutes' ? 0.01 : undefined}
+                  value={str(values[f.key])}
+                  onChange={(e) => change(f.key, e.target.value)}
+                />
+              )
             )}
           </label>
         ))}
@@ -623,6 +636,8 @@ export function AdminResource({
                         new Date(str(row[c])).toLocaleString('en-GB', {
                           timeZone: 'Asia/Kathmandu',
                         })
+                      ) : resource === 'routes' && c === 'durationMinutes' ? (
+                        travelHours(Number(row[c]))
                       ) : (
                         display(row[c])
                       )}

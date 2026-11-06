@@ -1,5 +1,5 @@
 'use client';
-import { SignedTicket, Clarification } from './booking-tools';
+import { DownloadTicket, SignedTicket, Clarification } from './booking-tools';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
@@ -20,7 +20,7 @@ import {
 import { api, ErrorBox, Skeleton, Badge, Sheet, Empty, Unavailable, onForm } from './common';
 import { useSite } from './site-context';
 import { Button } from './ui/button';
-import { money, nepalTime } from '@/lib/utils';
+import { money, nepalTime, travelHours } from '@/lib/utils';
 import type { BookingView, TripView } from '@/lib/types';
 const dateLabel = (d: string) =>
   new Date(d).toLocaleDateString('en-GB', {
@@ -131,7 +131,7 @@ export function TripCard({ trip: t }: { trip: TripView }) {
           <span className="line" />
           <Clock3 size={15} className="muted" />
           <span className="muted" style={{ fontSize: 11 }}>
-            {Math.floor(t.route.durationMinutes / 60)}h {t.route.durationMinutes % 60}m
+            {travelHours(t.route.durationMinutes)}
           </span>
           <span className="line" />
           <strong>{nepalTime(t.arrival)}</strong>
@@ -676,10 +676,7 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
           <p className="muted">
             Show this ticket to your driver. Please arrive 20 minutes before departure.
           </p>
-          <Button variant="outline" onClick={() => window.print()}>
-            <Download size={16} />
-            Save / print ticket
-          </Button>
+          <DownloadTicket booking={b} />
           <SignedTicket id={id} />
         </div>
       )}

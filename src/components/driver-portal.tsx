@@ -5,7 +5,8 @@ import { Plus, Trash2 } from 'lucide-react';
 import { api, Badge, Empty, ErrorBox, Skeleton, onForm } from './common';
 import { SeatGridEditor } from './layouts';
 import { Button } from './ui/button';
-import { money } from '@/lib/utils';
+import { PasswordInput } from './ui/password-input';
+import { money, travelHours } from '@/lib/utils';
 import { validateLayout, type Grid } from '@/lib/seat-layout';
 
 type Submission = {
@@ -211,15 +212,15 @@ export function DriverProfile() {
         <div className="grid-2">
           <label>
             Current password *
-            <input name="current" type="password" required autoComplete="current-password" />
+            <PasswordInput name="current" required autoComplete="current-password" />
           </label>
           <label>
             New password (12+ characters) *
-            <input name="next" type="password" required minLength={12} maxLength={128} autoComplete="new-password" />
+            <PasswordInput name="next" required minLength={12} maxLength={128} autoComplete="new-password" />
           </label>
           <label>
             Repeat new password *
-            <input name="again" type="password" required minLength={12} maxLength={128} autoComplete="new-password" />
+            <PasswordInput name="again" required minLength={12} maxLength={128} autoComplete="new-password" />
           </label>
         </div>
         <Button disabled={busy}>Change password</Button>
@@ -506,7 +507,7 @@ function RouteForm({ fleet, route, onDone }: { fleet: Fleet; route?: RouteRow; o
               origin,
               destination,
               distanceKm: Number(f.get('distanceKm')),
-              durationMinutes: Number(f.get('durationMinutes')),
+              durationMinutes: Math.round(Number(f.get('durationHours')) * 60),
               baseFare: Number(f.get('baseFare')),
               vehicleType: type,
               stops: stops.map((s) => ({ ...s, offsetMinutes: Number(s.offsetMinutes), kmFromOrigin: Number(s.kmFromOrigin) })),
@@ -543,8 +544,8 @@ function RouteForm({ fleet, route, onDone }: { fleet: Fleet; route?: RouteRow; o
           <input name="distanceKm" type="number" min={1} required defaultValue={route?.distanceKm} />
         </label>
         <label>
-          Travel time (minutes) *
-          <input name="durationMinutes" type="number" min={1} required defaultValue={route?.durationMinutes} />
+          Travel time (hours) *
+          <input name="durationHours" type="number" min={0.01} step={0.01} required defaultValue={route ? route.durationMinutes / 60 : undefined} />
         </label>
         <label>
           Price, start to end (NPR) *
@@ -667,7 +668,7 @@ export function DriverRoutes() {
               {r.origin.name} → {r.destination.name}
             </h2>
             <p>
-              {money(r.baseFare)} · {r.distanceKm} km · {r.durationMinutes} min
+              {money(r.baseFare)} · {r.distanceKm} km · {travelHours(r.durationMinutes)}
             </p>
             {r.stops.length > 0 && <p className="muted">Via {r.stops.map((s) => s.location.name).join(', ')}</p>}
             {pendingFor(q.data, 'routes', r.id) ? (
@@ -862,13 +863,43 @@ type OwnTrip = {
   route: { origin: { name: string }; destination: { name: string } };
   confirmedPassengers: number;
 };
+type PublishedSchedule = {
+  id: string;
+  batchId: string;
+  startsOn: string;
+  endsOn: string;
+  departureMinutes: number;
+  fare: number;
+  status: 'DRAFT' | 'PUBLISHED' | 'PAUSED' | 'CANCELLED' | 'COMPLETED';
+  route: { origin: { name: string }; destination: { name: string } };
+  vehicle: { name: string; registration: string };
+  trips: { id: string; departure: string; status: string; bookings: { id: string }[] }[];
+};
+type SchedulePlan = { routeId: string; vehicleId: string; paymentQRId: string; departureTime: string; fare: string };
+const nepalDate = (offset = 0) => {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kathmandu' }));
+  d.setDate(d.getDate() + offset);
+  return d.toLocaleDateString('en-CA');
+};
+const clockLabel = (hour: number) => {
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const shown = hour % 12 || 12;
+  return `${shown}:00 ${suffix}`;
+};
 
 export function DriverSchedule() {
   const client = useQueryClient();
   const q = useFleet();
   const trips = useQuery({ queryKey: ['driver-trips'], queryFn: () => api<{ items: OwnTrip[] }>('/api/driver/trips') });
+  const schedules = useQuery({ queryKey: ['driver-schedules'], queryFn: () => api<{ items: PublishedSchedule[] }>('/api/driver/schedules') });
   const [routeId, setRouteId] = useState(''),
     [departureTimes, setDepartureTimes] = useState(['']),
+    [publishMode, setPublishMode] = useState<'single' | 'double'>('single'),
+    [amHour, setAmHour] = useState(6),
+    [pmHour, setPmHour] = useState(16),
+    [startsOn, setStartsOn] = useState(nepalDate(1)),
+    [endsOn, setEndsOn] = useState(nepalDate(7)),
+    [plans, setPlans] = useState<SchedulePlan[]>([{ routeId: '', vehicleId: '', paymentQRId: '', departureTime: '06:00', fare: '' }]),
     [error, setError] = useState<unknown>(null),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
@@ -905,15 +936,96 @@ export function DriverSchedule() {
       setError(e);
     }
   }
+  const updatePlan = (index: number, patch: Partial<SchedulePlan>) => setPlans((old) => old.map((plan, i) => i === index ? { ...plan, ...patch } : plan));
+  const chooseDoubleTrip = () => {
+    setPublishMode('double');
+    setPlans((old) => {
+      const next = [...old];
+      while (next.length < 2) next.push({ routeId: '', vehicleId: '', paymentQRId: '', departureTime: '16:00', fare: '' });
+      next[0] = { ...next[0], departureTime: `${String(amHour).padStart(2, '0')}:00` };
+      next[1] = { ...next[1], departureTime: `${String(pmHour).padStart(2, '0')}:00` };
+      return next;
+    });
+  };
+  const changeTripHour = (index: 0 | 1, hour: number) => {
+    if (index === 0) setAmHour(hour); else setPmHour(hour);
+    updatePlan(index, { departureTime: `${String(hour).padStart(2, '0')}:00` });
+  };
+  const dates = startsOn && endsOn && startsOn <= endsOn ? Math.floor((Date.parse(endsOn + 'T00:00:00Z') - Date.parse(startsOn + 'T00:00:00Z')) / 86400000) + 1 : 0;
+  const refreshSchedules = async () => {
+    await Promise.all([client.invalidateQueries({ queryKey: ['driver-schedules'] }), client.invalidateQueries({ queryKey: ['driver-trips'] })]);
+  };
+  const controlSchedule = async (id: string, action: 'pause' | 'resume' | 'cancel' | 'extend') => {
+    const nextEnd = action === 'extend' ? window.prompt('New end date (YYYY-MM-DD):', endsOn) : null;
+    if (action === 'extend' && !nextEnd) return;
+    setBusy(true); setError(null); setNotice('');
+    try {
+      await api('/api/driver/schedules/' + id, { method: 'PATCH', body: JSON.stringify(action === 'extend' ? { action, endsOn: nextEnd } : { action }) });
+      setNotice(`Schedule ${action === 'cancel' ? 'cancelled' : action === 'extend' ? 'extended' : action + 'd'}.`);
+      await refreshSchedules();
+    } catch (e) { setError(e); } finally { setBusy(false); }
+  };
   return (
     <>
       <p className="eyebrow">DEPARTURES</p>
       <h1>Publish route</h1>
       {notice && <p className="notice success" role="status">{notice}</p>}
       <ErrorBox error={error || trips.error} />
+      <section className="card stack">
+        <div role="tablist" aria-label="Trip publishing mode" className="row">
+          <Button type="button" role="tab" aria-selected={publishMode === 'single'} variant={publishMode === 'single' ? 'default' : 'outline'} onClick={() => setPublishMode('single')}>Single trip</Button>
+          <Button type="button" role="tab" aria-selected={publishMode === 'double'} variant={publishMode === 'double' ? 'default' : 'outline'} onClick={chooseDoubleTrip}>Double trip</Button>
+        </div>
+        <p className="muted">{publishMode === 'single' ? 'Publish one or more individual departures.' : 'Publish multiple route schedules across consecutive days, such as an outbound and return trip.'}</p>
+      </section>
       {missing.length > 0 ? (
         <p className="notice">Before you can publish a route, you need an active {missing.join(', ')}.</p>
       ) : (
+        <>
+        {publishMode === 'double' && <>
+        <section className="card stack">
+          <div className="spread"><div><h2>Long-term trip publishing</h2><p className="muted">Publish one or more existing routes across consecutive dates. Each date becomes its own bookable trip.</p></div><Badge status="DRAFT" /></div>
+          <div className="grid-2">
+            <label>
+              Morning departure: <strong>{clockLabel(amHour)}</strong>
+              <input aria-label="Morning departure time" type="range" min={0} max={11} step={1} value={amHour} onChange={(e) => changeTripHour(0, Number(e.target.value))} />
+            </label>
+            <label>
+              Afternoon/evening return: <strong>{clockLabel(pmHour)}</strong>
+              <input aria-label="Return departure time" type="range" min={12} max={23} step={1} value={pmHour} onChange={(e) => changeTripHour(1, Number(e.target.value))} />
+            </label>
+          </div>
+          <p className="muted">The AM slider controls route schedule 1; the PM slider controls route schedule 2. Add more schedules if needed.</p>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            {[7, 14, 30].map((days) => <Button key={days} type="button" variant="outline" onClick={() => { setStartsOn(nepalDate(1)); setEndsOn(nepalDate(days)); }}>{days} days</Button>)}
+          </div>
+          <div className="grid-2">
+            <label>Start date *<input type="date" required value={startsOn} onChange={(e) => setStartsOn(e.target.value)} /></label>
+            <label>End date *<input type="date" required value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} /></label>
+          </div>
+          {plans.map((plan, index) => (
+            <div className="card stack" key={index}>
+              <div className="spread"><h3>Route schedule {index + 1}</h3>{plans.length > 1 && <Button type="button" variant="outline" onClick={() => setPlans((old) => old.filter((_, i) => i !== index))}>Remove</Button>}</div>
+              <div className="grid-2">
+                <label>Route *<select required value={plan.routeId} onChange={(e) => updatePlan(index, { routeId: e.target.value })}><option value="">Choose a route</option>{routes.map((r) => <option key={r.id} value={r.id}>{r.origin.name} → {r.destination.name}</option>)}</select></label>
+                <label>Vehicle *<select required value={plan.vehicleId} onChange={(e) => updatePlan(index, { vehicleId: e.target.value })}><option value="">Choose a vehicle</option>{vehicles.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.registration}</option>)}</select></label>
+                <label>Payment account *<select required value={plan.paymentQRId} onChange={(e) => updatePlan(index, { paymentQRId: e.target.value })}><option value="">Choose an account</option>{qrs.map((r) => <option key={r.id} value={r.id}>{r.label} · {r.accountName}</option>)}</select></label>
+                <label>Departure time *<input type="time" required value={plan.departureTime} onChange={(e) => updatePlan(index, { departureTime: e.target.value })} /></label>
+                <label>Fare per seat (NPR)<input type="number" min={1} placeholder="Route fare" value={plan.fare} onChange={(e) => updatePlan(index, { fare: e.target.value })} /></label>
+              </div>
+            </div>
+          ))}
+          <div className="row"><Button type="button" variant="outline" onClick={() => setPlans((old) => [...old, { routeId: '', vehicleId: '', paymentQRId: '', departureTime: '06:00', fare: '' }])}>Add another route</Button><span className="muted">Preview: {dates > 0 ? dates * plans.length : 0} separate trips, in date order.</span></div>
+          <Button disabled={busy || !dates || plans.some((p) => !p.routeId || !p.vehicleId || !p.paymentQRId)} onClick={async () => { setBusy(true); setError(null); setNotice(''); try { const result = await api<{ created: number }>('/api/driver/schedules', { method: 'POST', body: JSON.stringify({ startsOn, endsOn, plans: plans.map((p) => ({ ...p, fare: p.fare ? Number(p.fare) : undefined })) }) }); setNotice(`${result.created} trips published across ${dates} days.`); await refreshSchedules(); } catch (e) { setError(e); } finally { setBusy(false); } }}>{busy ? 'Publishing…' : 'Publish schedule'}</Button>
+        </section>
+        <section className="stack">
+          <h2>Published schedules</h2>
+          {schedules.data?.items.map((schedule) => <article className="card" key={schedule.id}><div className="spread"><div><h3>{schedule.route.origin.name} → {schedule.route.destination.name}</h3><p>{schedule.vehicle.name} · {schedule.vehicle.registration} · {String(Math.floor(schedule.departureMinutes / 60)).padStart(2, '0')}:{String(schedule.departureMinutes % 60).padStart(2, '0')}</p><p className="muted">{schedule.startsOn.slice(0, 10)} to {schedule.endsOn.slice(0, 10)} · {schedule.trips.length} future trips · {schedule.trips.reduce((n, trip) => n + trip.bookings.length, 0)} active bookings</p></div><Badge status={schedule.status} /></div><div className="row"><Button variant="outline" disabled={busy || schedule.status !== 'PUBLISHED'} onClick={() => controlSchedule(schedule.id, 'pause')}>Pause</Button><Button variant="outline" disabled={busy || schedule.status !== 'PAUSED'} onClick={() => controlSchedule(schedule.id, 'resume')}>Resume</Button><Button variant="outline" disabled={busy || ['CANCELLED', 'COMPLETED'].includes(schedule.status)} onClick={() => controlSchedule(schedule.id, 'extend')}>Extend</Button><Button variant="destructive" disabled={busy || ['CANCELLED', 'COMPLETED'].includes(schedule.status)} onClick={() => controlSchedule(schedule.id, 'cancel')}>Cancel future</Button></div></article>)}
+          {!schedules.data?.items.length && <Empty text="No long-term schedules yet." />}
+        </section>
+        </>}
+        {publishMode === 'single' && <>
+        <h2>One-off departures</h2>
         <form
           className="card stack"
           onSubmit={onForm(async (f, form) => {
@@ -998,11 +1110,13 @@ export function DriverSchedule() {
           </div>
           {route && (
             <p className="muted">
-              Price per seat: {money(route.baseFare)}, from your approved route. Travel time: {route.durationMinutes} minutes.
+              Price per seat: {money(route.baseFare)}, from your approved route. Travel time: {travelHours(route.durationMinutes)}.
             </p>
           )}
           <Button disabled={busy}>{busy ? 'Publishing…' : 'Publish selected departures'}</Button>
         </form>
+        </>}
+        </>
       )}
       <h2>Upcoming trips</h2>
       <div className="trip-grid">

@@ -6,11 +6,14 @@ import { PrismaClient } from '@prisma/client';
 import { reserve } from '../src/lib/bookings';
 import {
   cancelOwnTrip,
+  controlOwnSchedule,
+  createOwnSchedules,
   createOwnerDriver,
   createOfflineBooking,
   createOwnTrip,
   fleet,
   listSubmissions,
+  ownSchedules,
   reviewSubmission,
   submit,
   updateProfile,
@@ -87,6 +90,22 @@ test('owner-drivers change nothing public until an admin approves it', { skip: !
     const offline = await createOfflineBooking(driver.id, { tripId: directTrip.id, seats: [directSeat.id], name: 'Walk in', phone: '+9779800000009', fromLocationId: directStops[0].locationId, toLocationId: directStops[1].locationId, paid: true, amount: 500, method: 'CASH' });
     assert.equal(offline.status, 'CONFIRMED', 'offline and online bookings share the confirmed inventory path');
     await assert.rejects(reserve({ tripId: directTrip.id, seats: [directSeat.id], name: 'Overlap', phone: '+9779800000008', idempotencyKey: randomUUID() + randomUUID() }), status(409), 'overlapping seat is never double booked');
+
+    const scheduleQr = await db.paymentQR.findFirstOrThrow({ where: { operatorId: row.operatorId, active: true } });
+    const date = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+    const published = await createOwnSchedules(driver.id, {
+      startsOn: date(12),
+      endsOn: date(14),
+      plans: [{ routeId: directRoute.id, vehicleId: directVehicle.id, paymentQRId: scheduleQr.id, departureTime: '06:00' }],
+    });
+    assert.equal(published.created, 3, 'one long-term schedule creates one independent trip per day');
+    const schedule = (await ownSchedules(driver.id)).find((s) => s.id === published.schedules[0].id)!;
+    assert.equal(schedule.trips.length, 3);
+    await controlOwnSchedule(driver.id, schedule.id, { action: 'pause' });
+    assert.equal((await db.trip.count({ where: { scheduleId: schedule.id, bookingOpen: false } })), 3, 'pausing closes future bookings without deleting trips');
+    await controlOwnSchedule(driver.id, schedule.id, { action: 'resume' });
+    await controlOwnSchedule(driver.id, schedule.id, { action: 'extend', endsOn: date(15) });
+    assert.equal(await db.trip.count({ where: { scheduleId: schedule.id } }), 4, 'extending creates only the new date');
     return;
 
     // Personal details are the driver's own and apply at once.

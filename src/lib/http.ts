@@ -34,17 +34,20 @@ import { matchJourney, seatStateFor, timeAtStop, type TripStop } from './invento
 import { resolveJourney } from './route-stops';
 import {
   cancelOwnTrip,
+  controlOwnSchedule,
   changePassword,
   createOfflineBooking,
   createOwnerDriver,
   deleteOwnResource,
   createOwnTrip,
+  createOwnSchedules,
   fleet,
   getProfile,
   driverDashboard,
   driverHistory,
   listSubmissions,
   ownBookings,
+  ownSchedules,
   ownTripAvailability,
   reviewOwnPayment,
   reviewSubmission,
@@ -170,11 +173,13 @@ export async function handle(req: Request, path: string[]) {
       );
     if (key === 'health' && method === 'GET') {
       try {
-        await db.$queryRawUnsafe('SELECT 1');
-        return json({ status: 'ready', database: 'up' });
+        // A connection-only probe can pass while the deployed database is missing migrations.
+        // Check a stable application table as well, without reading customer data.
+        await db.location.findFirst({ select: { id: true } });
+        return json({ status: 'ready', database: 'up', schema: 'up' });
       } catch (e) {
         console.error(JSON.stringify({ route: 'health', error: describeError(e) }));
-        return json({ status: 'degraded', database: 'down', error: 'The database is not reachable.' }, 503);
+        return json({ status: 'degraded', database: 'down', error: 'The database or its schema is not ready.' }, 503);
       }
     }
     if (key === 'auth/login' && method === 'POST') {
@@ -860,6 +865,11 @@ export async function handle(req: Request, path: string[]) {
       }
       if (path[1] === 'password' && method === 'POST') return json(await changePassword(driver.id, await body(req)));
       if (path[1] === 'fleet' && method === 'GET') return json(await fleet(driver.id));
+      if (path[1] === 'schedules') {
+        if (method === 'GET' && !path[2]) return json({ items: await ownSchedules(driver.id) });
+        if (method === 'POST' && !path[2]) return json(await createOwnSchedules(driver.id, await body(req)), 201);
+        if (method === 'PATCH' && path[2]) return json({ items: await controlOwnSchedule(driver.id, path[2], await body(req)) });
+      }
       if (path[1] === 'submissions') throw new ApiError(404, 'Driver approval requests are no longer used.');
       if (path[1] === 'resources' && method === 'POST')
         return json(await submit(driver.id, await body(req)), 201);
@@ -1054,7 +1064,10 @@ export async function handle(req: Request, path: string[]) {
   } catch (error) {
     const requestId = randomUUID();
     const c = classifyError(error);
-    if (c.log) console.error(JSON.stringify({ requestId, method, route: path[0] ?? '', error: describeError(error) }));
+    if (c.log)
+      console.error(
+        JSON.stringify({ requestId, method, route: '/' + path.join('/'), error: describeError(error) }),
+      );
     return Response.json(
       { error: c.message, requestId },
       {

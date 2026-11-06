@@ -4,6 +4,7 @@ import { BusFront, ShieldCheck } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { api, ErrorBox, onForm } from './common';
 import { Button } from './ui/button';
+import { PasswordInput } from './ui/password-input';
 export function SignIn() {
   const [error, setError] = useState<unknown>(null),
     [pending, setPending] = useState(false);
@@ -56,7 +57,7 @@ export function SignIn() {
         </label>
         <label>
           Password
-          <input name="password" type="password" autoComplete="current-password" required />
+          <PasswordInput name="password" autoComplete="current-password" required />
         </label>
         <ErrorBox error={error} />
         <Button disabled={pending}>
