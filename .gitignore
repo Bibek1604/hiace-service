@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.env
+.env.*
+!.env.example
+.npm-cache/
+*.tsbuildinfo
+playwright-report/
+test-results/
+.validation/
+# Local object storage used when S3_BUCKET is not configured.
+storage/
+*.log
+
+# Private local PostgreSQL cluster created by scripts/local-db.mjs
+.localdb/

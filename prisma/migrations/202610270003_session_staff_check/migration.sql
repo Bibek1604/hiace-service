@@ -1,0 +1,1 @@
+ALTER TABLE "Session" DROP CONSTRAINT IF EXISTS "Session_check";

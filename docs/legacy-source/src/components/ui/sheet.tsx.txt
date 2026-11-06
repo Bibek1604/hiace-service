@@ -1,0 +1,4 @@
+'use client';
+import * as Dialog from '@radix-ui/react-dialog';
+import { X } from 'lucide-react';
+export function Sheet({ title, trigger, children }: { title: string; trigger: React.ReactNode; children: React.ReactNode }) { return <Dialog.Root><Dialog.Trigger asChild>{trigger}</Dialog.Trigger><Dialog.Portal><Dialog.Overlay className="sheet-overlay"/><Dialog.Content className="sheet-content"><Dialog.Title>{title}</Dialog.Title><Dialog.Description className="muted">Choose what works best for your journey.</Dialog.Description><Dialog.Close className="sheet-close" aria-label="Close"><X size={20}/></Dialog.Close>{children}</Dialog.Content></Dialog.Portal></Dialog.Root>; }

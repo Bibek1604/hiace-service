@@ -1,0 +1,14 @@
+import { db } from './db';
+export type TripCard = { id: string; departure: string; fare: number; available: number; occupied: string[]; vehicle: { name: string; type: string; photo: string; gallery: string[]; registration: string; operator: string; amenities: string[]; seats: string[] }; route: { origin: string; destination: string; durationMinutes: number; distanceKm: number; boardingPoint: string; dropPoint: string } };
+export const seats = Array.from({ length: 10 }, (_, i) => `A${i + 1}`);
+export const photos = { mountain: 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&w=1600&q=85', pokhara: 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&w=800&q=80', chitwan: 'https://images.unsplash.com/photo-1516426122078-c23e76319801?auto=format&fit=crop&w=800&q=80', lumbini: 'https://images.unsplash.com/photo-1605640840605-14ac1855827b?auto=format&fit=crop&w=800&q=80', van: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80' };
+export function demoTrips(): TripCard[] {
+  const date = new Date(); date.setDate(date.getDate() + 1); date.setUTCHours(1, 15, 0, 0);
+  return ['Pokhara', 'Chitwan', 'Lumbini', 'Pokhara'].map((destination, i) => ({ id: `preview-${i + 1}`, departure: new Date(date.getTime() + i * 3600000).toISOString(), fare: [1400, 950, 1600, 1800][i], available: 8 - i, occupied: seats.slice(8 - i), vehicle: { name: ['Himalayan Comfort', 'Sajilo Express', 'Buddha Deluxe', 'Mountain Cruiser'][i], type: i === 3 ? 'Tourist Bus' : 'Premium Hiace', photo: photos.van, gallery: [], registration: `BA 3 KHA ${4200 + i}`, operator: 'Sajilo Travels', amenities: ['Air conditioning', 'USB charging', 'Reclining seats', 'Water bottle'], seats }, route: { origin: 'Kathmandu', destination, durationMinutes: [420, 300, 510, 450][i], distanceKm: [200, 165, 280, 200][i], boardingPoint: 'Gongabu Bus Park, Kathmandu', dropPoint: `${destination} Tourist Bus Park` } }));
+}
+export async function getTrips(): Promise<TripCard[]> {
+  if (!process.env.DATABASE_URL) return demoTrips();
+  const now = new Date();
+  const data = await db.trip.findMany({ where: { active: true, departure: { gt: now }, vehicle: { active: true } }, include: { vehicle: true, route: true, claims: { where: { booking: { OR: [{ status: 'CONFIRMED' }, { status: { in: ['HELD', 'REVIEW'] }, expiresAt: { gt: now } }] } } } }, orderBy: { departure: 'asc' }, take: 200 });
+  return data.map(t => ({ ...t, departure: t.departure.toISOString(), occupied: t.claims.map(c => c.seat), available: t.vehicle.seats.length - t.claims.length }));
+}

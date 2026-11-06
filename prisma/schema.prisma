@@ -1,0 +1,575 @@
+generator client {
+ provider = "prisma-client-js"
+}
+datasource db {
+ provider = "postgresql"
+ url = env("DATABASE_URL")
+}
+enum OperatorStatus {
+ PENDING
+ ACTIVE
+ SUSPENDED
+}
+enum DriverStatus {
+ ACTIVE
+ DEACTIVATED
+ SUSPENDED
+}
+enum LayoutStatus {
+ DRAFT
+ PUBLISHED
+ ARCHIVED
+}
+enum PointKind {
+ BOARDING
+ DROPOFF
+}
+enum BookingStatus {
+ HELD
+ PAYMENT_REVIEW
+ CONFIRMED
+ REJECTED
+ CANCELLED
+ EXPIRED
+ PAYMENT_RECONCILIATION_REQUIRED
+}
+enum PaymentStatus {
+ UNPAID
+ SUBMITTED
+ UNDER_REVIEW
+ VERIFIED
+ REJECTED
+}
+enum HoldStatus {
+ ACTIVE
+ RELEASED
+ CONVERTED
+}
+enum TripStatus {
+ SCHEDULED
+ BOARDING
+ DEPARTED
+ COMPLETED
+ CANCELLED
+}
+enum TicketStatus {
+ EXPECTED
+ CHECKED_IN
+ BOARDED
+}
+enum RefundStatus {
+ NOT_REQUIRED
+ REVIEW_REQUIRED
+ PENDING
+ APPROVED
+ COMPLETED
+ DECLINED
+}
+enum SubmissionStatus {
+ PENDING
+ APPROVED
+ REJECTED
+}
+enum NotificationStatus {
+ PENDING
+ PROCESSING
+ SENT
+ CANCELLED
+}
+model AdminUser {
+ id String @id @default(cuid())
+ email String @unique
+ name String
+ passwordHash String
+ active Boolean @default(true)
+ failedLogins Int @default(0)
+ lockedUntil DateTime?
+ sessions Session[]
+}
+model Operator {
+ id String @id @default(cuid())
+ name String
+ slug String @unique
+ contactName String @default("")
+ contactPhone String @default("")
+ contactEmail String?
+ status OperatorStatus @default(PENDING)
+ commissionBps Int @default(0)
+ suspendedReason String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ settings OperatorSettings?
+ drivers Driver[]
+ vehicles Vehicle[]
+ routes Route[]
+ paymentQRs PaymentQR[]
+ trips Trip[]
+ bookings Booking[]
+ seatLayouts SeatLayout[]
+ @@index([status])
+}
+model OperatorSettings {
+ operatorId String @id
+ tenant Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+ holdMinutes Int?
+ reviewMinutes Int?
+ allowSegmentResale Boolean @default(true)
+ cancellationPolicy String @default("")
+}
+model Driver {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ email String @unique
+ name String
+ passwordHash String
+ photoKey String?
+ mobile String
+ licenseNumber String @unique
+ licenseExpiry DateTime
+ address String?
+ emergencyContact String
+ active Boolean @default(true)
+ status DriverStatus @default(ACTIVE)
+ suspendedReason String?
+ sessions Session[]
+ assignments TripDriverAssignment[]
+ checkIns DriverCheckIn[]
+ submissions DriverSubmission[]
+}
+/// A change an owner-driver proposed. Nothing reaches passengers until an admin approves it.
+model DriverSubmission {
+ id String @id @default(cuid())
+ driverId String
+ driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+ operatorId String
+ kind String
+ targetId String?
+ payload Json
+ status SubmissionStatus @default(PENDING)
+ reviewNote String @default("")
+ reviewedById String?
+ reviewedAt DateTime?
+ createdAt DateTime @default(now())
+ @@index([status, createdAt])
+ @@index([driverId])
+}
+model Session {
+ id String @id
+ adminId String?
+ admin AdminUser? @relation(fields: [adminId], references: [id])
+ driverId String?
+ driver Driver? @relation(fields: [driverId], references: [id])
+ expiresAt DateTime
+ @@index([expiresAt])
+}
+model Vehicle {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ registration String @unique
+ name String
+ type String
+ operator String
+ operatorContact String
+ description String @default("")
+ emergencyContact String
+ amenities String[]
+ layoutVersionId String?
+ layoutVersion SeatLayoutVersion? @relation(fields: [layoutVersionId], references: [id])
+ active Boolean @default(true)
+ maintenanceNote String @default("")
+ images VehicleImage[]
+ seats VehicleSeat[]
+ trips Trip[]
+}
+model VehicleImage {
+ id String @id @default(cuid())
+ vehicleId String
+ vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+ key String
+ position Int @default(0)
+}
+model VehicleSeat {
+ id String @id @default(cuid())
+ vehicleId String
+ vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+ label String
+ row Int
+ column Int
+ deck Int @default(0)
+ category String @default("STANDARD")
+ tripSeats TripSeat[]
+ @@unique([vehicleId, label])
+ @@unique([vehicleId, row, column])
+}
+model Location {
+ id String @id @default(cuid())
+ name String @unique
+ origins Route[] @relation("Origin")
+ destinations Route[] @relation("Destination")
+ stops RouteStop[]
+ points BoardingPoint[]
+}
+model Route {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ originId String
+ origin Location @relation("Origin", fields: [originId], references: [id])
+ destinationId String
+ destination Location @relation("Destination", fields: [destinationId], references: [id])
+ distanceKm Int
+ durationMinutes Int
+ baseFare Int
+ active Boolean @default(true)
+ stops RouteStop[]
+ points BoardingPoint[]
+ segmentFares RouteSegmentFare[]
+ fares RouteFare[]
+ trips Trip[]
+ @@index([originId, destinationId])
+}
+model RouteStop {
+ id String @id @default(cuid())
+ routeId String
+ route Route @relation(fields: [routeId], references: [id])
+ locationId String
+ location Location @relation(fields: [locationId], references: [id])
+ position Int
+ offsetMinutes Int @default(0)
+ kmFromOrigin Int @default(0)
+ allowBoarding Boolean @default(true)
+ allowDropoff Boolean @default(true)
+ @@unique([routeId, position])
+ @@index([locationId])
+}
+model BoardingPoint {
+ id String @id @default(cuid())
+ routeId String
+ route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+ locationId String
+ location Location @relation(fields: [locationId], references: [id])
+ kind PointKind
+ name String
+ landmark String @default("")
+ extraMinutes Int @default(0)
+ active Boolean @default(true)
+ boardings Booking[] @relation("BookingBoarding")
+ drops Booking[] @relation("BookingDrop")
+ @@index([routeId, kind])
+}
+model TripFare {
+ tripId String
+ trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+ fromIdx Int
+ toIdx Int
+ amount Int
+ @@id([tripId, fromIdx, toIdx])
+}
+model RouteSegmentFare {
+ id String @id @default(cuid())
+ routeId String
+ route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+ vehicleType String
+ fromLocationId String
+ toLocationId String
+ amount Int
+ @@unique([routeId, vehicleType, fromLocationId, toLocationId])
+}
+model SeatLayout {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ name String
+ vehicleType String
+ archived Boolean @default(false)
+ createdAt DateTime @default(now())
+ versions SeatLayoutVersion[]
+}
+model SeatLayoutVersion {
+ id String @id @default(cuid())
+ layoutId String
+ layout SeatLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+ version Int
+ status LayoutStatus @default(DRAFT)
+ rows Int
+ cols Int
+ decks Int @default(1)
+ cells Json
+ seatCount Int @default(0)
+ createdById String
+ createdAt DateTime @default(now())
+ publishedAt DateTime?
+ vehicles Vehicle[]
+ @@unique([layoutId, version])
+}
+model RouteFare {
+ id String @id @default(cuid())
+ routeId String
+ route Route @relation(fields: [routeId], references: [id])
+ vehicleType String
+ fare Int
+ @@unique([routeId, vehicleType])
+}
+model Trip {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ vehicleId String
+ vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+ routeId String
+ route Route @relation(fields: [routeId], references: [id])
+ departure DateTime
+ arrival DateTime
+ boardingPoint String
+ dropPoint String
+ fare Int
+ paymentQRId String
+ paymentQR PaymentQR @relation(fields: [paymentQRId], references: [id])
+ status TripStatus @default(SCHEDULED)
+ bookingOpen Boolean @default(true)
+ bookingOpensAt DateTime?
+ bookingClosesAt DateTime?
+ recurringRule String?
+ stopSnapshot Json @default("[]")
+ segmentCount Int @default(1)
+ tripFares TripFare[]
+ assignments TripDriverAssignment[]
+ seats TripSeat[]
+ bookings Booking[]
+ @@index([departure, status])
+ @@index([operatorId, departure])
+ @@index([operatorId, bookingOpensAt, bookingClosesAt])
+}
+model TripDriverAssignment {
+ id String @id @default(cuid())
+ tripId String
+ trip Trip @relation(fields: [tripId], references: [id])
+ driverId String
+ driver Driver @relation(fields: [driverId], references: [id])
+ startsAt DateTime
+ endsAt DateTime
+ assignedAt DateTime @default(now())
+ endedAt DateTime?
+ @@index([driverId, startsAt])
+}
+model TripSeat {
+ id String @id @default(cuid())
+ tripId String
+ trip Trip @relation(fields: [tripId], references: [id])
+ vehicleSeatId String
+ vehicleSeat VehicleSeat @relation(fields: [vehicleSeatId], references: [id])
+ blocked Boolean @default(false)
+ bookings BookingSeat[]
+ @@unique([tripId, vehicleSeatId])
+}
+model GuestCustomer {
+ id String @id @default(cuid())
+ name String
+ phone String
+ email String?
+ bookings Booking[]
+}
+model Booking {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ reference String @unique
+ accessHash String
+ idempotencyKey String @unique
+ requestHash String
+ tripId String
+ trip Trip @relation(fields: [tripId], references: [id])
+ customerId String
+ customer GuestCustomer @relation(fields: [customerId], references: [id])
+ amount Int
+ fareSnapshot Int
+ fromIdx Int @default(0)
+ toIdx Int @default(1)
+ boardingPointId String?
+ boardingPoint BoardingPoint? @relation("BookingBoarding", fields: [boardingPointId], references: [id])
+ dropPointId String?
+ dropPoint BoardingPoint? @relation("BookingDrop", fields: [dropPointId], references: [id])
+ qrSnapshot Json
+ status BookingStatus @default(HELD)
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ seats BookingSeat[]
+ passengers Passenger[]
+ payment Payment?
+ hold SeatHold?
+ cancellation BookingCancellation?
+ @@index([status, expiresAt])
+ @@index([tripId, createdAt])
+ @@index([operatorId, createdAt(sort: Desc)])
+ @@index([customerId])
+ notifications NotificationOutbox[]
+}
+model BookingSeat {
+ id String @id @default(cuid())
+ bookingId String
+ booking Booking @relation(fields: [bookingId], references: [id])
+ tripSeatId String
+ tripSeat TripSeat @relation(fields: [tripSeatId], references: [id])
+ active Boolean @default(true)
+ fromIdx Int @default(0)
+ toIdx Int @default(1)
+ @@unique([bookingId, tripSeatId])
+ @@index([tripSeatId, active])
+}
+model Passenger {
+ id String @id @default(cuid())
+ bookingId String
+ booking Booking @relation(fields: [bookingId], references: [id])
+ name String
+ phone String
+ seatLabel String
+ boardingPoint String
+ destination String
+ checkIn DriverCheckIn?
+ @@unique([bookingId, seatLabel])
+}
+model BookingCancellation {
+ id String @id @default(cuid())
+ bookingId String @unique
+ booking Booking @relation(fields: [bookingId], references: [id])
+ operatorId String
+ actorId String
+ reason String
+ previousStatus BookingStatus
+ paidAmount Int @default(0)
+ refundStatus RefundStatus
+ refundAmount Int?
+ refundReference String?
+ refundNote String @default("")
+ refundUpdatedById String?
+ refundUpdatedAt DateTime?
+ createdAt DateTime @default(now())
+ @@index([operatorId, refundStatus])
+}
+model PaymentQR {
+ id String @id @default(cuid())
+ operatorId String
+ tenant Operator @relation(fields: [operatorId], references: [id])
+ label String
+ imageKey String
+ accountName String
+ accountNumber String?
+ operator String?
+ instructions String
+ active Boolean @default(true)
+ isDefault Boolean @default(false)
+ trips Trip[]
+ payments Payment[]
+ @@index([operatorId, isDefault])
+}
+model Payment {
+ id String @id @default(cuid())
+ bookingId String @unique
+ booking Booking @relation(fields: [bookingId], references: [id])
+ paymentQRId String
+ paymentQR PaymentQR @relation(fields: [paymentQRId], references: [id])
+ status PaymentStatus @default(UNPAID)
+ claimedAmount Int?
+ method String @default("QR")
+ transactionRef String?
+ duplicateReference Boolean @default(false)
+ reviewedById String?
+ reviewedAt DateTime?
+ note String @default("")
+ proofs PaymentProof[]
+ @@index([transactionRef])
+ @@index([status])
+ verifiedAmount Int?
+}
+model PaymentProof {
+ id String @id @default(cuid())
+ paymentId String
+ payment Payment @relation(fields: [paymentId], references: [id])
+ imageKey String
+ mime String
+ bytes Int
+ remarks String @default("")
+ createdAt DateTime @default(now())
+}
+model SeatHold {
+ id String @id @default(cuid())
+ bookingId String @unique
+ booking Booking @relation(fields: [bookingId], references: [id])
+ status HoldStatus @default(ACTIVE)
+ expiresAt DateTime
+ @@index([status, expiresAt])
+}
+model DriverCheckIn {
+ id String @id @default(cuid())
+ passengerId String @unique
+ passenger Passenger @relation(fields: [passengerId], references: [id])
+ driverId String
+ driver Driver @relation(fields: [driverId], references: [id])
+ status TicketStatus @default(CHECKED_IN)
+ updatedAt DateTime @updatedAt
+}
+model AuditLog {
+ id String @id @default(cuid())
+ actorId String
+ action String
+ targetId String
+ details Json
+ operatorId String?
+ createdAt DateTime @default(now())
+ @@index([targetId, createdAt])
+ @@index([operatorId, createdAt])
+}
+model Settings {
+ id String @id @default("global")
+ holdMinutes Int @default(10)
+ reviewMinutes Int @default(15)
+}
+model RateLimit {
+ key String @id
+ count Int @default(1)
+ resetAt DateTime
+}
+model PhoneChallenge {
+ id String @id @default(cuid())
+ reference String
+ phoneHash String
+ codeHash String
+ attempts Int @default(0)
+ expiresAt DateTime
+ usedAt DateTime?
+}
+model StoredObject {
+ id String @id
+ mime String
+ bytes Int
+ purpose String
+ ownerId String
+ createdAt DateTime @default(now())
+}
+
+model NotificationOutbox {
+ id String @id @default(cuid())
+ bookingId String
+ booking Booking @relation(fields: [bookingId], references: [id])
+ dedupeKey String @unique
+ recipient String
+ channel String @default("SMS")
+ subject String?
+ message String
+ expectedStatus BookingStatus
+ status NotificationStatus @default(PENDING)
+ attempts Int @default(0)
+ nextAttemptAt DateTime @default(now())
+ lockedUntil DateTime?
+ sentAt DateTime?
+ createdAt DateTime @default(now())
+ @@index([status, nextAttemptAt])
+}
+model SiteContent {
+ id String @id
+ value Json
+ updatedAt DateTime @default(now()) @updatedAt
+ updatedBy String?
+}

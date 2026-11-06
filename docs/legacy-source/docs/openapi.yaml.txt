@@ -1,0 +1,331 @@
+openapi: 3.1.0
+info:
+  title: Sajilo Yatra Booking API
+  version: 1.0.0
+  description: |
+    Same-origin API. All writes except the cron endpoint require an Origin header matching APP_ORIGIN.
+    Every response uses Cache-Control no-store. Errors are JSON objects with an error string.
+    Rate limits use PostgreSQL fixed 15-minute windows. 429 requests can retry after 15 minutes.
+    Guest access is an HttpOnly per-booking cookie. Booking IDs alone never authorize access.
+    Staff access uses opaque, server-stored, 8-hour HttpOnly sessions.
+    Money is integer NPR. All API timestamps are UTC ISO 8601; UI displays Asia/Kathmandu.
+servers:
+  - url: http://localhost:3000/api
+paths:
+  /trips:
+    get:
+      summary: List upcoming active trips with public vehicle and route details
+      responses:
+        '200': {description: 'Up to 200 trips, earliest first; occupied seat labels contain no passenger details.'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /bookings:
+    post:
+      summary: Atomically hold seats for 15 minutes, capped at departure
+      description: Unique trip/seat claims and serializable transactions guard against double booking. Fare is calculated on the server. Maximum 30 attempts per client key per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tripId, name, phone, seats]
+              properties:
+                tripId: {type: string}
+                name: {type: string, minLength: 2, maxLength: 100}
+                phone: {type: string, pattern: '^(?:\+977)?9[78]\d{8}$'}
+                seats: {type: array, minItems: 1, maxItems: 6, uniqueItems: true, items: {type: string}}
+            example: {tripId: trip_id, name: Sita Sharma, phone: '9841234567', seats: [A1, A2]}
+      responses:
+        '201':
+          description: Booking created and booking access cookie set. recoveryCode is returned only now; store it privately.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string}
+                  reference: {type: string}
+                  recoveryCode: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {description: Seat taken or serialization conflict. Refresh inventory before retrying.}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /bookings/recover:
+    post:
+      summary: Recover booking access with reference, matching phone and private code
+      description: This is possession-code recovery with phone matching; it does not send an SMS or establish ownership of a telephone number. Maximum 10 attempts per client key per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference, phone, recoveryCode]
+              properties:
+                reference: {type: string, maxLength: 30}
+                phone: {type: string, maxLength: 20}
+                recoveryCode: {type: string, maxLength: 100}
+      responses:
+        '200': {description: Booking id returned and access cookie set}
+        '404': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+  /bookings/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      summary: Get private booking details and available payment QRs
+      description: Requires cookie booking_{id}. Returns booking, trip, receipts and active qr records; accessHash is never returned. Expired holds are released first.
+      responses:
+        '200': {description: Private booking and payment status}
+        '404': {$ref: '#/components/responses/Error'}
+  /bookings/{id}/payment:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      summary: Submit receipt for manual review
+      description: |
+        Requires cookie booking_{id}. Only HELD bookings can submit.
+        Accepted images are PNG/JPEG/WebP, checked by file signature, maximum 5 MiB.
+        Changes status to REVIEW, never CONFIRMED. Review deadline is 24h from submission or departure, whichever is earlier.
+        Maximum 5 upload attempts per booking per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [screenshot, qrId]
+              properties:
+                screenshot: {type: string, format: binary}
+                qrId: {type: string}
+                transactionRef: {type: string, maxLength: 100}
+      responses:
+        '200': {description: 'Status REVIEW; payment awaits admin verification'}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {description: Hold expired or already submitted}
+  /auth/login:
+    post:
+      summary: Admin or provisioned driver login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string, format: email}
+                password: {type: string, maxLength: 200}
+      responses:
+        '200': {description: Staff role and staff_session cookie}
+        '401': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+  /auth/logout:
+    post:
+      summary: Revoke the current staff session
+      responses:
+        '200': {description: Session deleted and cookie cleared}
+  /driver/manifest:
+    get:
+      security: [{staffSession: []}]
+      summary: View confirmed passengers for assigned trips
+      description: Drivers only see their own assigned trips, departing from the past 24 hours onward. Admins may view all trips. No receipt images are included.
+      responses:
+        '200': {description: Trip route, vehicle, passenger names, phone numbers, seat labels and verified payment status}
+        '401': {$ref: '#/components/responses/Error'}
+  /admin/overview:
+    get:
+      security: [{staffSession: []}]
+      summary: Admin fleet, routes, drivers, payment QRs and latest 200 trips and bookings
+      responses:
+        '200': {description: Admin overview with private booking details and receipt references; no password hashes or access hashes}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/bookings/{id}/review:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      security: [{staffSession: []}]
+      summary: Approve or reject a payment after checking the operator account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approve]
+              properties:
+                approve: {type: boolean}
+                note: {type: string, maxLength: 500}
+      responses:
+        '200': {description: 'Approval confirms existing claims; rejection releases seats. Decision and actor are audited.'}
+        '409': {description: Booking expired, already reviewed, or missing seat claims. Never approve an expired booking. Handle any refund outside this system.}
+  /admin/vehicles:
+    post:
+      security: [{staffSession: []}]
+      summary: Register a vehicle; no application count limit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VehicleInput'}
+      responses:
+        '201': {description: Created vehicle}
+        '409': {description: Registration already exists}
+  /admin/vehicles/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    patch:
+      security: [{staffSession: []}]
+      summary: Activate or deactivate a vehicle for new searches and bookings
+      requestBody: {$ref: '#/components/requestBodies/Active'}
+      responses:
+        '200': {description: Updated vehicle; existing reservations remain intact}
+  /admin/routes:
+    post:
+      security: [{staffSession: []}]
+      summary: Create a route
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, destination, durationMinutes, distanceKm, boardingPoint, dropPoint]
+              properties:
+                origin: {type: string, minLength: 2, maxLength: 80}
+                destination: {type: string, minLength: 2, maxLength: 80}
+                durationMinutes: {type: integer, minimum: 1, maximum: 3000}
+                distanceKm: {type: integer, minimum: 1, maximum: 3000}
+                boardingPoint: {type: string, minLength: 2, maxLength: 200}
+                dropPoint: {type: string, minLength: 2, maxLength: 200}
+      responses:
+        '201': {description: Created route}
+  /admin/trips:
+    post:
+      security: [{staffSession: []}]
+      summary: Schedule an independent trip
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicleId, routeId, departure, fare]
+              properties:
+                vehicleId: {type: string}
+                routeId: {type: string}
+                driverId: {type: string}
+                departure: {type: string, format: date-time}
+                fare: {type: integer, minimum: 1, maximum: 100000}
+                active: {type: boolean, default: true}
+      responses:
+        '201': {description: Created trip with its own seat inventory}
+  /admin/trips/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    patch:
+      security: [{staffSession: []}]
+      summary: Change fare for future bookings only
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fare]
+              properties:
+                fare: {type: integer, minimum: 1, maximum: 100000}
+      responses:
+        '200': {description: Updated trip fare; existing booking totals are preserved}
+  /admin/qr:
+    post:
+      security: [{staffSession: []}]
+      summary: Upload an operator payment QR
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [label, accountName, image]
+              properties:
+                label: {type: string, minLength: 2, maxLength: 80}
+                accountName: {type: string, minLength: 2, maxLength: 100}
+                image: {type: string, format: binary}
+      responses:
+        '201': {description: Created active payment account QR; signature-checked image maximum 5 MiB}
+  /admin/qr/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    patch:
+      security: [{staffSession: []}]
+      summary: Activate or deactivate a QR
+      requestBody: {$ref: '#/components/requestBodies/Active'}
+      responses:
+        '200': {description: Updated QR}
+  /admin/drivers:
+    post:
+      security: [{staffSession: []}]
+      summary: Provision a driver account; admin only, no public registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: {type: string, minLength: 2, maxLength: 100}
+                email: {type: string, format: email}
+                password: {type: string, minLength: 12, maxLength: 200}
+      responses:
+        '201': {description: Driver id, name and email; password hash never returned}
+  /files/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      summary: Load an image
+      description: Active payment QR images are public. Receipts require admin access or their booking cookie. Drivers have no receipt access. File identifiers do not authorize receipt access.
+      responses:
+        '200': {description: PNG, JPEG or WebP image with private no-store caching}
+        '404': {$ref: '#/components/responses/Error'}
+  /jobs/expire:
+    post:
+      security: [{cronBearer: []}]
+      summary: Release expired unpaid or review-held seats
+      description: Run every minute. Confirmed bookings are never released by this job. Expiry also runs lazily on reservation, review and booking reads.
+      responses:
+        '200': {description: Expiry complete}
+        '401': {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    staffSession: {type: apiKey, in: cookie, name: staff_session}
+    cronBearer: {type: http, scheme: bearer}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: string}}
+  requestBodies:
+    Active:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [active]
+            properties:
+              active: {type: boolean}
+  responses:
+    Error:
+      description: Request rejected
+      content:
+        application/json:
+          schema: {type: object, required: [error], properties: {error: {type: string}}}
+    Unavailable:
+      description: PostgreSQL is not configured; preview mode does not accept bookings
+  schemas:
+    VehicleInput:
+      type: object
+      required: [registration, name, type, photo, operator, amenities, seats]
+      properties:
+        registration: {type: string, minLength: 3, maxLength: 40}
+        name: {type: string, minLength: 2, maxLength: 100}
+        type: {type: string, enum: [Premium Hiace, Tourist Bus, Jeep, Microbus]}
+        photo: {type: string, format: uri}
+        gallery: {type: array, maxItems: 20, items: {type: string, format: uri}}
+        operator: {type: string, minLength: 2, maxLength: 100}
+        amenities: {type: array, maxItems: 20, items: {type: string, maxLength: 80}}
+        seats: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {type: string, pattern: '^[A-Z]\d{1,2}$'}}
+        active: {type: boolean, default: true}

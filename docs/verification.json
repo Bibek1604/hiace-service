@@ -1,0 +1,66 @@
+{
+  "timestamp": "2026-10-19T02:30:00.757Z",
+  "schema": {
+    "engine": "Prisma 6.19 WASM",
+    "models": 28,
+    "enums": 6,
+    "status": "PASS"
+  },
+  "typecheck": {
+    "engine": "TypeScript 5.9 compiler API with Prisma-generated model declarations",
+    "diagnostics": 0,
+    "status": "PASS"
+  },
+  "lint": {
+    "engine": "ESLint TypeScript recommended and React hooks rules",
+    "files": 55,
+    "errors": 0,
+    "warnings": 0
+  },
+  "tests": {
+    "runner": "In-process harness executing the committed test callbacks; genuine PostgreSQL WASM and Sharp native decoder, no upstream mocks",
+    "results": [
+      {
+        "name": "expired screenshot review requires reconciliation rather than payment failure",
+        "status": "PASS"
+      },
+      {
+        "name": "a confirmed seat stays booked even when its original hold time passed",
+        "status": "PASS"
+      },
+      {
+        "name": "unexpired hold is unavailable, expired hold is available, blocked is labeled",
+        "status": "PASS"
+      },
+      {
+        "name": "payment references are normalized for duplicate investigation",
+        "status": "PASS"
+      },
+      {
+        "name": "PostgreSQL migrations enforce ownership, immutable confirmed claims and audit, and nonoverlapping schedules",
+        "status": "PASS"
+      },
+      {
+        "name": "a genuine PNG is decoded and reencoded as metadata-free WebP without enlargement",
+        "status": "PASS"
+      },
+      {
+        "name": "MIME spoofing and SVG disguised as PNG are rejected",
+        "status": "PASS"
+      },
+      {
+        "name": "oversized, executable and truncated image uploads fail closed",
+        "status": "PASS"
+      }
+    ]
+  },
+  "limitations": [
+    "Shell and child processes blocked with Access denied / EPERM",
+    "Native PostgreSQL/Prisma integration and concurrency suite not run",
+    "Next.js production build not run",
+    "Playwright/browser mobile rendering tests not run",
+    "S3 and SMS gateway not live-tested",
+    "Dependency installation prepared in-process; normal npm install and lockfile generation required in deployment environment",
+    "No deployed URL or external infrastructure provisioned"
+  ]
+}

@@ -1,0 +1,9 @@
+'use client';
+import { useState } from 'react';
+import { ArrowRightLeft, MapPin, CalendarDays, Search, ChevronDown } from 'lucide-react';
+import { Button } from './ui/button';
+const cities = ['Kathmandu', 'Pokhara', 'Chitwan', 'Lumbini', 'Butwal', 'Bhairahawa', 'Dharan', 'Biratnagar'];
+export function SearchForm({ compact = false }: { compact?: boolean }) {
+  const [from, setFrom] = useState('Kathmandu'); const [to, setTo] = useState('Pokhara');
+  return <form action="/search" className={`search-form ${compact ? 'compact' : ''}`}><label><span className="field-icon"><MapPin size={19}/></span><span className="field-content"><small>FROM</small><select name="from" value={from} onChange={e=>setFrom(e.target.value)} aria-label="Departure city">{cities.map(c=><option key={c}>{c}</option>)}</select><span className="field-hint">Your starting point</span></span><ChevronDown size={14}/></label><button className="swap" type="button" aria-label="Swap cities" onClick={()=>{ setFrom(to); setTo(from); }}><ArrowRightLeft size={17}/></button><label><span className="field-icon"><MapPin size={19}/></span><span className="field-content"><small>TO</small><select name="to" value={to} onChange={e=>setTo(e.target.value)} aria-label="Destination">{cities.map(c=><option key={c}>{c}</option>)}</select><span className="field-hint">Where are you headed?</span></span><ChevronDown size={14}/></label><label><span className="field-icon"><CalendarDays size={19}/></span><span className="field-content"><small>TRAVEL DATE</small><input type="date" name="date" aria-label="Travel date" min={new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kathmandu'})}/><span className="field-hint">Pick your departure date</span></span></label><Button type="submit"><Search size={19}/> Search rides</Button></form>;
+}

@@ -1,0 +1,30 @@
+name: Booking safety checks
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: booking
+          POSTGRES_PASSWORD: booking
+          POSTGRES_DB: booking_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://booking:booking@localhost:5432/booking_test
+      SESSION_SECRET: ci-only-secret-at-least-32-characters-long
+      APP_ORIGIN: http://localhost:3000
+      RUN_DB_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run db:migrate
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build

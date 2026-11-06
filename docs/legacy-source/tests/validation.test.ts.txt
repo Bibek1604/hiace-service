@@ -1,0 +1,7 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { bookingInput, tripInput, vehicleInput, routeInput } from '../src/lib/validation';
+test('booking requires a Nepal mobile number and between one and six seats',()=>{const base={tripId:'trip',name:'Sita Sharma',phone:'9841234567',seats:['A1']};assert.equal(bookingInput.safeParse(base).success,true);for(const change of [{phone:'1234'},{seats:[]},{seats:Array(7).fill('A1')},{name:'A'}])assert.equal(bookingInput.safeParse({...base,...change}).success,false);});
+test('vehicle layouts reject duplicate seat labels',()=>{const v={registration:'BA 1234',name:'Comfort',type:'Premium Hiace',photo:'https://example.com/bus.jpg',operator:'Sajilo',amenities:[],seats:['A1','A1']};assert.equal(vehicleInput.safeParse(v).success,false);assert.equal(vehicleInput.safeParse({...v,seats:['A1','A2']}).success,true);});
+test('fare must be a positive integer and departure must be future',()=>{const v={vehicleId:'v',routeId:'r',departure:new Date(Date.now()+86400000).toISOString(),fare:1400};assert.equal(tripInput.safeParse(v).success,true);for(const change of [{fare:0},{fare:1.5},{departure:'2020-01-01T00:00:00Z'}])assert.equal(tripInput.safeParse({...v,...change}).success,false);});
+test('route cannot start and finish in the same city',()=>{assert.equal(routeInput.safeParse({origin:'Pokhara',destination:'Pokhara',durationMinutes:60,distanceKm:30,boardingPoint:'Bus Park',dropPoint:'Lakeside'}).success,false);});
