@@ -29,6 +29,22 @@ test('missing or placeholder secrets and a bad origin are errors', () => {
   assert.ok(checkEnv({ ...good, SESSION_SECRET: 'short' }).errors.some((e) => /32/.test(e)));
 });
 
+test('Vercel rejects a database URL that points back to its own function', () => {
+  const r = checkEnv({ ...good, VERCEL: '1', DATABASE_URL: 'postgresql://app:secret@127.0.0.1:54329/booking' });
+  assert.ok(r.errors.some((e) => /loopback host/.test(e)));
+});
+
+test('Vercel flags incomplete Prisma transaction-pooler settings', () => {
+  const r = checkEnv({
+    ...good,
+    VERCEL: '1',
+    DATABASE_URL: 'postgresql://app:secret@pooler.example.com:6543/booking',
+  });
+  assert.deepEqual(r.errors, []);
+  assert.ok(r.warnings.some((w) => /pgbouncer=true/.test(w)));
+  assert.ok(r.warnings.some((w) => /connection_limit=1/.test(w)));
+});
+
 test('partial storage, mail or SMS setup and a missing delivery channel are warnings, not errors', () => {
   const r = checkEnv({ ...good, AWS_SECRET_ACCESS_KEY: undefined, MAIL_FROM: undefined, SMS_HTTP_URL: 'https://sms' });
   assert.deepEqual(r.errors, []);

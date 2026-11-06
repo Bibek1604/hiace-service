@@ -12,7 +12,23 @@ export function checkEnv(env: Env = process.env): EnvReport {
     warnings: string[] = [];
   const production = env.NODE_ENV === 'production';
   const url = env.DATABASE_URL ?? '';
-  if (!/^postgres(ql)?:\/\//.test(url)) errors.push('DATABASE_URL must be a postgresql:// connection string.');
+  let databaseUrl: URL | undefined;
+  try {
+    databaseUrl = new URL(url);
+    if (!/^postgres(ql)?:$/.test(databaseUrl.protocol) || !databaseUrl.hostname)
+      throw new Error('not a PostgreSQL URL');
+  } catch {
+    errors.push('DATABASE_URL must be a postgresql:// connection string.');
+  }
+  const vercel = !!(env.VERCEL || env.VERCEL_ENV);
+  if (databaseUrl && vercel && ['localhost', '127.0.0.1', '::1'].includes(databaseUrl.hostname))
+    errors.push('DATABASE_URL points to a loopback host. Vercel cannot reach a database on your local machine.');
+  if (databaseUrl && vercel && databaseUrl.port === '6543') {
+    if (databaseUrl.searchParams.get('pgbouncer') !== 'true')
+      warnings.push('DATABASE_URL uses a transaction pooler but is missing pgbouncer=true for Prisma.');
+    if (!databaseUrl.searchParams.has('connection_limit'))
+      warnings.push('DATABASE_URL uses a transaction pooler without connection_limit; use connection_limit=1 for serverless functions.');
+  }
   if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32)
     errors.push(
       'SESSION_SECRET must be at least 32 random characters (sessions, tickets and booking links depend on it).',
