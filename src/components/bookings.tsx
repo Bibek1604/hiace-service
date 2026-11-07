@@ -301,7 +301,7 @@ function PrintableTicket({ id }: { id: string }) {
             </li>
           ))}
         </ul>
-        <p className="muted" style={{ fontSize: 10, wordBreak: 'break-all' }}>Verification code: {t.ticket}</p>
+        <p className="muted" style={{ fontSize: 'var(--text-caption)', wordBreak: 'break-all' }}>Verification code: {t.ticket}</p>
       </div>
       <Button onClick={() => window.print()}>
         <Printer size={15} /> Print

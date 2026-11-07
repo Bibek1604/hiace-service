@@ -1,6 +1,7 @@
 /*
- * Device layer, loaded after the design styles. It only adapts the existing design to phones, tablets,
- * short landscape screens and installed-app mode; desktop widths keep their original look.
+ * Device layer, loaded after the design styles. The first part adapts layout to phones, tablets, short
+ * landscape screens and installed-app mode; the fluid scale at the end sizes text, spacing, cards and
+ * buttons smoothly from small phones to large desktops, so new screens do not need their own rules.
  * Breakpoints: phone <= 767px, tablet 768-1099px, short landscape <= 500px tall.
  */
 html {
@@ -436,4 +437,249 @@ body:has(.staff-shell) .mobile-nav,
 body:has(.staff-shell) .header,
 body:has(.staff-shell) .site-footer {
   display: none;
+}
+
+/*
+ * Fluid scale. Every size grows smoothly between a 320px phone and a 1440px desktop, in rem so a person's
+ * browser text size is respected. Use these tokens for new styles instead of fixed pixel sizes.
+ */
+:root {
+  --text-caption: clamp(0.75rem, 0.732rem + 0.089vw, 0.8125rem); /* 12-13px: badges, meta lines */
+  --text-small: clamp(0.8125rem, 0.795rem + 0.089vw, 0.875rem); /* 13-14px: labels, tables */
+  --text-button: clamp(0.875rem, 0.857rem + 0.089vw, 0.9375rem); /* 14-15px */
+  --text-body: clamp(0.9375rem, 0.92rem + 0.089vw, 1rem); /* 15-16px */
+  --text-lead: clamp(0.9375rem, 0.884rem + 0.268vw, 1.125rem); /* 15-18px */
+  --text-h3: clamp(1.0625rem, 1.009rem + 0.268vw, 1.25rem); /* 17-20px */
+  --text-h2: clamp(1.375rem, 1.232rem + 0.714vw, 1.875rem); /* 22-30px */
+  --text-h1: clamp(1.75rem, 1.464rem + 1.43vw, 2.75rem); /* 28-44px */
+  --text-hero: clamp(2.25rem, 1.786rem + 2.32vw, 3.875rem); /* 36-62px */
+  --text-figure: clamp(1.5rem, 1.357rem + 0.714vw, 2rem); /* 24-32px: stats, prices */
+  --space-page: clamp(1rem, 0.71rem + 1.43vw, 2rem); /* 16-32px */
+  --space-card: clamp(1rem, 0.786rem + 1.07vw, 1.75rem); /* 16-28px */
+  --space-gap: clamp(0.75rem, 0.536rem + 1.07vw, 1.5rem); /* 12-24px */
+  --radius-card: clamp(0.875rem, 0.768rem + 0.536vw, 1.25rem); /* 14-20px */
+  /* Darker than the original grey so secondary text reaches 4.5:1 on the tinted page backgrounds too. */
+  --muted: #5a6a7e;
+}
+
+@media screen {
+  /* Text. */
+  body {
+    font-size: var(--text-body);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+  h1,
+  .staff-content h1 {
+    font-size: var(--text-h1);
+  }
+  h2,
+  .section-title h2 {
+    font-size: var(--text-h2);
+  }
+  h3,
+  .benefit h3 {
+    font-size: var(--text-h3);
+  }
+  .card h2 {
+    font-size: var(--text-h3);
+  }
+  .hero h1 {
+    font-size: var(--text-hero);
+    max-width: 16ch;
+  }
+  .hero p {
+    font-size: var(--text-lead);
+    max-width: 46ch;
+  }
+  .brand {
+    font-size: clamp(1.1875rem, 1.116rem + 0.357vw, 1.4375rem);
+    letter-spacing: -0.03em;
+  }
+  .eyebrow,
+  .hero-tag,
+  .badge,
+  .legend,
+  .seat,
+  .seat-front,
+  .step-number,
+  .data-table th,
+  .data-table.responsive td[data-label]::before,
+  .definition dt,
+  .detail-list dt,
+  .price small,
+  .trip-meta,
+  .hero-photos figcaption,
+  .install-hint,
+  .sidebar-group > p,
+  .staff-topbar-user,
+  .history {
+    font-size: var(--text-caption);
+  }
+  label,
+  .track-link,
+  .stat span,
+  .trip-meta,
+  .journey-step p,
+  .benefit p,
+  .section-title p,
+  .section-title > a,
+  .stop-line li,
+  .footer,
+  .site-footer,
+  .site-footer h4,
+  .data-table,
+  .update-banner,
+  .more-links a,
+  .staff-shell aside nav a {
+    font-size: var(--text-small);
+  }
+  .eyebrow {
+    letter-spacing: 0.1em;
+  }
+  .brand small,
+  .staff-shell aside .brand small,
+  .sidebar-user span {
+    color: var(--muted);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+  }
+  .data-table th,
+  .data-table.responsive td[data-label]::before {
+    letter-spacing: 0.03em;
+  }
+  /* Five labels share a phone's width, so these follow the screen and stay on one line. */
+  .mobile-nav a,
+  .mobile-nav .install-btn,
+  .staff-tabs a,
+  .staff-tabs button {
+    font-size: clamp(0.6875rem, 3.1vw, 0.8125rem);
+  }
+
+  /* Buttons. */
+  .button,
+  .install-btn {
+    padding-inline: clamp(0.875rem, 0.7rem + 0.9vw, 1.5rem);
+    font-size: var(--text-button);
+    line-height: 1.3;
+  }
+
+  /* Cards. */
+  .card,
+  .payment-review,
+  .staff-content .card,
+  .staff-content .admin-form,
+  .staff-content .payment-review {
+    padding: var(--space-card);
+    border-radius: var(--radius-card);
+  }
+  .trip-card {
+    border-radius: var(--radius-card);
+  }
+  .trip-body {
+    padding: var(--space-card);
+  }
+  .trip-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
+    gap: var(--space-gap);
+  }
+  .trip-photo {
+    height: clamp(130px, 20vw, 190px);
+  }
+  .vehicle-placeholder {
+    height: clamp(96px, 14vw, 140px);
+  }
+  .trip-route {
+    margin-top: clamp(0.875rem, 2vw, 1.375rem);
+    font-size: var(--text-h3);
+  }
+  .times strong {
+    font-size: clamp(1.0625rem, 0.99rem + 0.357vw, 1.3125rem);
+  }
+  /* The price and button share a row while both fit, and the button drops below when they do not. */
+  .trip-footer {
+    flex-wrap: wrap;
+    gap: 10px 14px;
+  }
+  .price {
+    flex: 0 0 auto;
+    font-size: var(--text-figure);
+    white-space: nowrap;
+  }
+  .trip-footer .button {
+    flex: 1 1 9.5rem;
+  }
+
+  /* Stat tiles fill each row for the width they have. */
+  .stats,
+  .staff-content .stats {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, clamp(8.5rem, 22vw, 13rem)), 1fr));
+    gap: var(--space-gap);
+  }
+  .stat {
+    padding: var(--space-card);
+    border-radius: var(--radius-card);
+  }
+  .stat strong {
+    font-size: var(--text-figure);
+    line-height: 1.2;
+  }
+  .staff-content .stat::after {
+    width: clamp(40px, 6vw, 72px);
+    height: clamp(40px, 6vw, 72px);
+    right: clamp(-22px, -2vw, -16px);
+    top: clamp(-24px, -2vw, -18px);
+  }
+
+  /* Page width and spacing. */
+  .header {
+    max-width: clamp(1180px, 82vw, 1420px);
+  }
+  .container:not(.narrow),
+  .hero-inner,
+  .site-footer-grid,
+  .copyright {
+    max-width: clamp(1120px, 80vw, 1360px);
+  }
+  .container {
+    padding-left: var(--space-page);
+    padding-right: var(--space-page);
+  }
+  .staff-content {
+    padding-left: var(--space-page);
+    padding-right: var(--space-page);
+  }
+
+  /* Colours that fell short of a readable 4.5:1. */
+  .badge.paused {
+    color: #75570a;
+  }
+  .badge.held,
+  .badge.submitted,
+  .badge.under_review,
+  .badge.payment_review {
+    color: #75570a;
+  }
+  .site-footer .copyright {
+    color: #c6dcf7;
+  }
+
+  /* Touch screens have no hover: a lifted card or button would stay stuck after a tap. */
+  @media (hover: none) {
+    .trip-card:hover,
+    .button:not(:disabled):hover,
+    .install-btn:not(:disabled):hover {
+      transform: none;
+    }
+  }
+}
+
+/* The tagline cannot fit beside the header button on phones, and shrinking it made it unreadable. */
+@media screen and (max-width: 480px) {
+  .header .brand small {
+    display: none;
+  }
 }

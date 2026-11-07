@@ -292,7 +292,7 @@ export function SeatGridEditor({ grid, edit, header }: { grid: Grid; edit: (chan
                     borderRadius: 8,
                     border: '1px solid var(--border, #cbd5e1)',
                     background: !c ? 'transparent' : isBookableSeat(c) ? (c.label ? (c.kind === 'door-seat' ? '#fef3c7' : '#dcfce7') : '#fee2e2') : '#e2e8f0',
-                    fontSize: 12,
+                    fontSize: 'var(--text-caption)',
                     cursor: 'pointer',
                   }}
                 >

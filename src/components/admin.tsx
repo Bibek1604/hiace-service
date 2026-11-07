@@ -921,7 +921,7 @@ export function AuditLogPage() {
                   <td data-label="Details">
                     <details>
                       <summary>View</summary>
-                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, margin: 0 }}>{JSON.stringify(row.details, null, 2)}</pre>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--text-caption)', margin: 0 }}>{JSON.stringify(row.details, null, 2)}</pre>
                     </details>
                   </td>
                 </tr>

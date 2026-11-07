@@ -117,7 +117,7 @@ export function TripCard({ trip: t }: { trip: TripView }) {
         <div className="trip-top">
           <div>
             <h3>{t.vehicle.name}</h3>
-            <span className="muted" style={{ fontSize: 11 }}>
+            <span className="muted" style={{ fontSize: 'var(--text-caption)' }}>
               {t.vehicle.operator} · {t.vehicle.type}
             </span>
           </div>
@@ -129,20 +129,20 @@ export function TripCard({ trip: t }: { trip: TripView }) {
           {from.name} <span className="blue">→</span> {to.name}
         </div>
         {partial && (
-          <div className="muted" style={{ fontSize: 11 }}>
+          <div className="muted" style={{ fontSize: 'var(--text-caption)' }}>
             Part of {t.route.origin.name} → {t.route.destination.name}
           </div>
         )}
         <div className="times">
           <div>
             <strong>{nepalTime(t.boardsAt)}</strong>
-            <div className="muted" style={{ fontSize: 10 }}>
+            <div className="muted" style={{ fontSize: 'var(--text-caption)' }}>
               {dateLabel(t.boardsAt)}
             </div>
           </div>
           <span className="line" />
           <Clock3 size={15} className="muted" />
-          <span className="muted" style={{ fontSize: 11 }}>
+          <span className="muted" style={{ fontSize: 'var(--text-caption)' }}>
             {travelHours(to.offsetMinutes - from.offsetMinutes)}
           </span>
           <span className="line" />
@@ -370,7 +370,7 @@ export function TripDetail({ id, from: firstFrom = '', to: firstTo = '' }: { id:
       <p className="eyebrow" style={{ marginTop: 25 }}>
         CHOOSE YOUR JOURNEY
       </p>
-      <h1 style={{ fontSize: 32 }}>
+      <h1>
         {t.route.origin.name} <span className="blue">→</span> {t.route.destination.name}
       </h1>
       <div className="row">
@@ -554,7 +554,7 @@ export function TripDetail({ id, from: firstFrom = '', to: firstTo = '' }: { id:
             </div>
           ))}
         </div>
-        <p className="muted" style={{ textAlign: 'center', fontSize: 11 }}>
+        <p className="muted" style={{ textAlign: 'center', fontSize: 'var(--text-caption)' }}>
           Seats are held only after you submit contact details.
         </p>
       </div>
@@ -612,7 +612,7 @@ export function TripDetail({ id, from: firstFrom = '', to: firstTo = '' }: { id:
               placeholder="you@example.com"
             />
           </label>
-          <p className="muted" style={{ fontSize: 11 }}>
+          <p className="muted" style={{ fontSize: 'var(--text-caption)' }}>
             This contact will be used for all selected seats. Add an email to receive your booking
             number, seats, route and time once payment is confirmed, and to recover your booking later.
           </p>
@@ -702,7 +702,7 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
   return (
     <main className="container narrow">
       <p className="eyebrow">{copy.booking.eyebrow}</p>
-      <h1 style={{ fontSize: 32 }}>
+      <h1>
         {confirmed
           ? copy.booking.readyTitle
           : statusPage

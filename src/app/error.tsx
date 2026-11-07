@@ -28,7 +28,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
           {section.label}
         </Link>
       </Empty>
-      {error.digest && <p className="muted" style={{ textAlign: 'center', fontSize: 11 }}>Reference: {error.digest}</p>}
+      {error.digest && <p className="muted" style={{ textAlign: 'center', fontSize: 'var(--text-caption)' }}>Reference: {error.digest}</p>}
     </main>
   );
 }

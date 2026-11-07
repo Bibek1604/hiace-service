@@ -18,7 +18,7 @@ export function SignIn() {
         <BusFront className="blue" />
         SajiloYatra
       </div>
-      <h1 className="display" style={{ fontSize: 30, marginTop: 30 }}>{role === 'ADMIN' ? 'Admin sign in' : 'Driver sign in'}</h1>
+      <h1 className="display" style={{ marginTop: 30 }}>{role === 'ADMIN' ? 'Admin sign in' : 'Driver sign in'}</h1>
       <p className="muted">Secure access for administrators and drivers.</p>
       <form
         className="card stack"

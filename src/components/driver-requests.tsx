@@ -90,7 +90,7 @@ function SeatPreview({ grid }: { grid: Grid }) {
                   style={{
                     height: 34,
                     borderRadius: 6,
-                    fontSize: 10,
+                    fontSize: 'var(--text-caption)',
                     display: 'grid',
                     placeItems: 'center',
                     background: !c ? 'transparent' : isBookableSeat(c) ? (c.kind === 'door-seat' ? '#fef3c7' : '#dcfce7') : '#e2e8f0',

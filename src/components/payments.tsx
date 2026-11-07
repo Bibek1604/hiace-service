@@ -49,7 +49,7 @@ function Audit({ target }: { target: string }) {
             {a.actorId} ·{' '}
             {new Date(a.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Kathmandu' })}
           </p>
-          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11 }}>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--text-caption)' }}>
             {JSON.stringify(a.details, null, 2)}
           </pre>
         </div>

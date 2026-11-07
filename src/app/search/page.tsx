@@ -13,7 +13,7 @@ export default async function Search({
   return (
     <main className="container">
       <p className="eyebrow">{copy.search.eyebrow}</p>
-      <h1 style={{ fontSize: 34 }}>{copy.search.title}</h1>
+      <h1>{copy.search.title}</h1>
       <div className="search-card" style={{ marginBottom: 30 }}>
         <SearchForm initial={filters} />
       </div>
