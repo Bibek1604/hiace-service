@@ -27,7 +27,7 @@ async function record(role: LoginRole, id: string, ok: boolean, rehash?: string)
 
 /** Returns the opaque session secret on success. All failures present the same message. */
 export async function login(role: LoginRole, email: string, password: string): Promise<string> {
-  const fail = () => new ApiError(401, 'Invalid credentials.');
+  const fail = () => new ApiError(401, 'That email or password is incorrect. Please check them and try again.');
   const user = await find(role, email);
   if (!user) {
     await burnPasswordCheck(password);

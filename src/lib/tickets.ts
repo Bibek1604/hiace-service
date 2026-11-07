@@ -4,7 +4,7 @@ import { ApiError } from './security';
 
 const key = (min = 32) => {
   const secret = process.env.SESSION_SECRET;
-  if (!secret || secret.length < min) throw new ApiError(503, 'Ticket signing unavailable.');
+  if (!secret || secret.length < min) throw new ApiError(503, 'Tickets can’t be prepared right now. Your booking is safe, so please try again shortly.');
   return new TextEncoder().encode(secret);
 };
 

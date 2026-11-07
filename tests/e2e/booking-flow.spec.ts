@@ -81,7 +81,7 @@ test('wrong passwords never lock a staff account and the email field survives ea
   };
   for (let i = 0; i < 6; i++) {
     expect(await attempt('wrong-password-' + i), 'attempt ' + i).toBe(401);
-    await expect(page.locator('div.error[role="alert"]')).toHaveText(/Invalid credentials/);
+    await expect(page.locator('div.error[role="alert"]')).toHaveText(/email or password is incorrect|Invalid credentials/);
     await expect(page.getByLabel('Email', { exact: true })).toHaveValue(s.driver.email);
     await expect(page.getByRole('button', { name: 'Sign in securely' })).toBeEnabled();
   }

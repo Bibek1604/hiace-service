@@ -28,7 +28,7 @@ function keyFor(purpose: string, id: string) {
 
 const client = () => {
   if (!process.env.S3_BUCKET || !process.env.S3_REGION)
-    throw new ApiError(503, 'Object storage is not configured.');
+    throw new Error('Storage is not configured.');
   return new S3Client({
     region: process.env.S3_REGION,
     endpoint: process.env.S3_ENDPOINT || undefined,
@@ -105,7 +105,7 @@ export async function multipart(req: Request) {
     size += value.length;
     if (size > 6 * 1024 * 1024) {
       await reader.cancel();
-      throw new ApiError(413, 'Upload exceeds 5 MB.');
+      throw new ApiError(413, 'This image is larger than 5 MB. Please choose a smaller one.');
     }
     chunks.push(value);
   }

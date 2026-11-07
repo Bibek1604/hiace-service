@@ -3,6 +3,7 @@ import { Poppins, Fraunces } from 'next/font/google';
 import { Providers } from '@/components/providers';
 import { Header, Footer } from '@/components/common';
 import { PwaRegister } from '@/components/pwa';
+import { ImageFallback } from '@/components/image-fallback';
 import { getSiteContent } from '@/lib/site-content-db';
 import './globals.css';
 const poppins = Poppins({
@@ -34,6 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body suppressHydrationWarning className={poppins.className + ' ' + display.variable} style={{ ['--blue' as string]: site.theme.primary, ['--navy' as string]: site.theme.dark }}>
         <Providers site={site}>
           <PwaRegister />
+        <ImageFallback />
           <Header site={site} />
           {children}
           <Footer site={site} />

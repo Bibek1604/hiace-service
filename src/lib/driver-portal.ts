@@ -113,7 +113,7 @@ export async function createOwnerDriver(raw: unknown, actorId: string) {
 
 async function me(driverId: string) {
   const d = await db.driver.findUnique({ where: { id: driverId }, include: { tenant: true } });
-  if (!d) throw new ApiError(401, 'Please sign in.');
+  if (!d) throw new ApiError(401, 'Your session has ended. Please sign in again.');
   return d;
 }
 export async function getProfile(driverId: string) {

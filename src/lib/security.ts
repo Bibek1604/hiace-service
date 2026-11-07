@@ -14,7 +14,7 @@ export function same(a: string, b: string) {
 export function capability(key: string) {
   const secret = process.env.SESSION_SECRET;
   if (!secret || secret.length < 32)
-    throw new ApiError(503, 'Server security configuration is incomplete.');
+    throw new ApiError(503, 'Secure sign-in and booking links aren’t available right now. Please try again shortly.');
   return createHmac('sha256', secret).update(key).digest('base64url');
 }
 export type StaffRole = 'ADMIN' | 'DRIVER';
@@ -27,7 +27,7 @@ export async function staff(role?: StaffRole) {
       })
     : null;
   const live = !!s?.admin?.active || !!(s?.driver?.active && s.driver.status === 'ACTIVE');
-  if (!s || s.expiresAt <= new Date() || !live) throw new ApiError(401, 'Please sign in.');
+  if (!s || s.expiresAt <= new Date() || !live) throw new ApiError(401, 'Your session has ended. Please sign in again.');
   const actual: StaffRole = s.admin ? 'ADMIN' : 'DRIVER';
   if (role && role !== actual) throw new ApiError(403, 'Access denied.');
   return { id: (s.adminId || s.driverId)!, role: actual, name: s.admin?.name || s.driver!.name };

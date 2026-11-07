@@ -7,7 +7,34 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Button } from './ui/button';
 import { InstallApp } from './pwa';
 import type { SiteContent } from '@/lib/site-content';
+/** A refused or failed API call. `reference` matches the requestId in the server logs. */
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly reference?: string,
+  ) {
+    super(message);
+  }
+}
+/** Vercel refuses request bodies over 4.5 MB before they reach the app, so larger files are stopped here. */
+const MAX_UPLOAD_BYTES = 4.4 * 1024 * 1024;
+const TOO_LARGE = 'This image is too large. Please choose one under 4 MB.';
+function messageForStatus(status: number) {
+  if (status === 401) return 'Your session has ended. Please sign in again.';
+  if (status === 403) return 'You don’t have permission to do that.';
+  if (status === 404) return 'We couldn’t find that. It may have been removed.';
+  if (status === 408 || status === 504) return 'That took too long. Please try again.';
+  if (status === 409) return 'This was changed a moment ago. Refresh and try again.';
+  if (status === 413) return TOO_LARGE;
+  if (status === 429) return 'Too many attempts. Please wait a moment and try again.';
+  if (status >= 500) return 'The service is temporarily unavailable. Please try again in a moment.';
+  return 'Something went wrong. Please try again.';
+}
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+  if (init?.body instanceof FormData)
+    for (const value of init.body.values())
+      if (value instanceof File && value.size > MAX_UPLOAD_BYTES) throw new ApiRequestError(TOO_LARGE, 413);
   let r: Response;
   try {
     r = await fetch(url, {
@@ -24,16 +51,16 @@ export async function api<T = unknown>(url: string, init?: RequestInit): Promise
   try {
     data = await r.json();
   } catch {
-    throw new Error(
-      r.status >= 500
-        ? 'The service is temporarily unavailable. Please try again in a moment.'
-        : 'Unable to reach the server. Try again.',
+    throw new ApiRequestError(
+      r.ok ? 'We got an unexpected reply from the server. Please refresh and try again.' : messageForStatus(r.status),
+      r.status,
     );
   }
   if (!r.ok)
-    throw new Error(
-      data?.error ||
-        (r.status === 429 ? 'Too many attempts. Please wait a moment.' : 'Something went wrong. Please try again.'),
+    throw new ApiRequestError(
+      data?.error || messageForStatus(r.status),
+      r.status,
+      r.status >= 500 && typeof data?.requestId === 'string' ? data.requestId.slice(0, 8) : undefined,
     );
   return data;
 }
@@ -52,6 +79,9 @@ export function ErrorBox({ error }: { error: unknown }) {
   return error ? (
     <div role="alert" className="error">
       {error instanceof Error ? error.message : String(error)}
+      {error instanceof ApiRequestError && error.reference && (
+        <small style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>Reference: {error.reference}</small>
+      )}
     </div>
   ) : null;
 }
@@ -376,11 +406,23 @@ export function Unavailable({
   detail?: string;
 }) {
   const offline = error instanceof Error && /unable to reach/i.test(error.message);
-  return offline ? (
-    <Empty text="Can’t connect right now" detail="Check your internet connection and try again.">
-      {retry && <Button onClick={retry}>Try again</Button>}
-    </Empty>
-  ) : (
+  if (offline)
+    return (
+      <Empty text="Can’t connect right now" detail="Check your internet connection and try again.">
+        {retry && <Button onClick={retry}>Try again</Button>}
+      </Empty>
+    );
+  // A server fault says nothing about the ride itself, so it must not read as "sold out".
+  if (error instanceof ApiRequestError && error.status >= 500)
+    return (
+      <Empty text="We can’t load this right now" detail={error.message}>
+        {retry && <Button onClick={retry}>Try again</Button>}
+        <Link href="/" className="button outline">
+          Back home
+        </Link>
+      </Empty>
+    );
+  return (
     <Empty text={text} detail={detail}>
       <Link href="/search" className="button">
         Find another ride

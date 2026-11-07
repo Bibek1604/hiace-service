@@ -49,3 +49,48 @@ test('Prisma diagnostics contain only a code and optional model name', () => {
   assert.equal(describeError(error), 'PrismaClientKnownRequestError:P2021:model=Location');
   assert.doesNotMatch(describeError(error), /sensitive|details/i);
 });
+
+const upload = { method: 'POST', path: ['admin', 'uploads'] };
+
+test('a failure names the action that could not be completed', () => {
+  const failed = (method: string, path: string[]) => classifyError(new Error('boom'), { method, path }).message;
+  assert.match(failed('POST', ['bookings']), /reserve your seats/);
+  assert.match(failed('POST', ['bookings', 'abc', 'proof']), /submit your payment proof/);
+  assert.match(failed('GET', ['admin', 'vehicles']), /load the vehicles/);
+  assert.match(failed('DELETE', ['admin', 'vehicles', 'abc']), /delete this vehicle/);
+  assert.match(failed('POST', ['driver', 'uploads']), /upload your image/);
+  assert.match(classifyError(new Error('boom')).message, /complete that/);
+});
+
+test('missing storage credentials are reported as a storage problem', () => {
+  const missing = new Error('Could not load credentials from any providers');
+  missing.name = 'CredentialsProviderError';
+  const c = classifyError(missing, upload);
+  assert.equal(c.status, 503);
+  assert.match(c.message, /Image storage isn’t available, so we couldn’t upload your image/);
+  assert.match(c.message, /storage settings/);
+  assert.match(classifyError(missing, { method: 'POST', path: ['bookings', 'a', 'proof'] }).message, /contact the driver/);
+});
+
+test('any refusal from the storage service is a storage problem', () => {
+  const refused = Object.assign(new Error('not supported'), { name: 'NotImplemented', $metadata: { httpStatusCode: 501 } });
+  assert.match(classifyError(refused, upload).message, /Image storage/);
+});
+
+test('form problems read as plain sentences', () => {
+  const schema = z.object({
+    name: z.string().min(2),
+    email: z.string().email(),
+    tripId: z.string(),
+    seats: z.array(z.string()).min(1),
+    mobile: z.string().regex(/^9/, 'Enter a Nepal mobile number.'),
+  });
+  const message = (input: unknown) => classifyError(schema.safeParse(input).error).message;
+  const valid = { name: 'Ram', email: 'a@b.co', tripId: 't', seats: ['A1'], mobile: '98' };
+  assert.equal(message({ ...valid, name: 'R' }), 'Name must be at least 2 characters.');
+  assert.equal(message({ ...valid, email: 'x' }), 'Please enter a valid email address.');
+  assert.equal(message({ ...valid, tripId: undefined }), 'Please choose the ride.');
+  assert.equal(message({ ...valid, seats: [] }), 'Please add at least one seat.');
+  assert.equal(message({ ...valid, mobile: '1' }), 'Enter a Nepal mobile number.');
+  assert.equal(message({}).split('. ').length, 3);
+});

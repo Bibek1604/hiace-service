@@ -94,7 +94,7 @@ async function bounded(req: Request, max: number) {
     size += value.length;
     if (size > max) {
       await reader.cancel();
-      throw new ApiError(413, 'Request too large.');
+      throw new ApiError(413, 'That’s too much to send at once. Please shorten it and try again.');
     }
     chunks.push(value);
   }
@@ -445,7 +445,7 @@ export async function handle(req: Request, path: string[]) {
         // With no delivery channel, development prints the code to the server console instead of failing.
         consoleOn = !smsOn && !mailOn && (process.env.NODE_ENV !== 'production' || process.env.OTP_CONSOLE === 'on');
       if (!smsOn && !mailOn && !consoleOn)
-        throw new ApiError(503, 'Booking verification is temporarily unavailable. Contact the driver.');
+        throw new ApiError(503, 'We can’t send verification codes right now. Please contact your driver for help with this booking.');
       const b = await db.booking.findFirst({
         where: { reference: d.reference, customer: { phone: d.phone } },
         include: { customer: true },
@@ -474,12 +474,12 @@ export async function handle(req: Request, path: string[]) {
               text: message,
             });
           } catch {
-            throw new ApiError(503, 'Unable to send the verification code. Try later.');
+            throw new ApiError(503, 'We couldn’t send your verification code right now. Please try again in a few minutes.');
           }
         } else if (smsOn) {
           const endpoint = new URL(process.env.SMS_HTTP_URL!);
           if (endpoint.protocol !== 'https:' && process.env.NODE_ENV === 'production')
-            throw new ApiError(503, 'SMS gateway must use HTTPS.');
+            throw new ApiError(503, 'We couldn’t send your verification code right now. Please try again in a few minutes.');
           const response = await fetch(endpoint, {
             method: 'POST',
             headers: {
@@ -490,7 +490,7 @@ export async function handle(req: Request, path: string[]) {
             signal: AbortSignal.timeout(10000),
           });
           if (!response.ok)
-            throw new ApiError(503, 'Unable to send the verification code. Try later.');
+            throw new ApiError(503, 'We couldn’t send your verification code right now. Please try again in a few minutes.');
         } else if (process.env.NODE_ENV !== 'production') {
           console.warn('[dev] booking access code for ' + d.reference + ': ' + code + ' (no channel can reach this booking)');
         }
@@ -546,7 +546,7 @@ export async function handle(req: Request, path: string[]) {
         resource = path[1];
 
       if (method === 'DELETE') {
-        if (!path[2]) throw new ApiError(400, 'Record ID required.');
+        if (!path[2]) throw new ApiError(400, 'Please choose a record first.');
         if (resource === 'seat-layouts') return json(await deleteLayout(null, admin.id, path[2]));
         if (resource === 'route-points') return json(await deletePoint(null, admin.id, path[2]));
         return json(await remove(resource, path[2], admin.id, null));
@@ -1043,10 +1043,10 @@ export async function handle(req: Request, path: string[]) {
         notifications: await dispatchNotifications(),
       });
     }
-    throw new ApiError(404, 'Endpoint not found.');
+    throw new ApiError(404, 'That action isn’t available. Please refresh the page and try again.');
   } catch (error) {
     const requestId = randomUUID();
-    const c = classifyError(error);
+    const c = classifyError(error, { method, path });
     if (c.log)
       console.error(
         JSON.stringify({ requestId, method, route: '/' + path.join('/'), error: describeError(error) }),
