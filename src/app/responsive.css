@@ -1,0 +1,439 @@
+/*
+ * Device layer, loaded after the design styles. It only adapts the existing design to phones, tablets,
+ * short landscape screens and installed-app mode; desktop widths keep their original look.
+ * Breakpoints: phone <= 767px, tablet 768-1099px, short landscape <= 500px tall.
+ */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+.staff-topbar,
+.staff-tabs {
+  display: none;
+}
+.staff-shell {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+.staff-shell.sidebar-collapsed {
+  grid-template-columns: 84px minmax(0, 1fr);
+}
+/* A long option or value must never stretch its form past the screen edge. */
+label {
+  min-width: 0;
+}
+input,
+select,
+textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+.sheet {
+  overscroll-behavior: contain;
+  padding-bottom: calc(30px + env(safe-area-inset-bottom));
+}
+@media (prefers-reduced-motion: no-preference) {
+  main,
+  .staff-content > * {
+    animation: page-in 0.18s ease-out;
+  }
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The highlighted hero line sits on a blue background, so it needs a light colour at every width. */
+.hero h1 .blue {
+  color: #ffd98a;
+}
+
+/* Update prompt from the service worker. */
+.update-banner {
+  position: fixed;
+  z-index: 35;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(calc(100% - 24px), 440px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: white;
+  box-shadow: 0 12px 34px #123b7530;
+  font-size: 14px;
+}
+.update-banner span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.update-banner .button {
+  flex: 0 0 auto;
+}
+
+/* Touch screens: fields of 16px stop iPhones zooming the page, and targets reach a comfortable 44px. */
+@media (max-width: 1099px), (pointer: coarse) {
+  /* Important because the design sets smaller sizes on many specific field selectors. */
+  input:not([type='checkbox'], [type='radio'], [type='file']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  .button,
+  .track-link,
+  .brand,
+  .install-btn,
+  summary {
+    min-height: 44px;
+  }
+  .track-link,
+  summary {
+    display: flex;
+    align-items: center;
+  }
+  summary {
+    cursor: pointer;
+  }
+  .password-toggle,
+  .sidebar-collapse {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  a.blue,
+  a.muted {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .site-footer a:not(.brand, .footer-btn),
+  .header nav a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  summary {
+    min-width: 44px;
+  }
+  .staff-content td input {
+    min-width: 64px;
+  }
+  .spread {
+    flex-wrap: wrap;
+  }
+  .spread > :first-child {
+    min-width: 0;
+    flex: 1 1 260px;
+  }
+}
+
+/* Tablets and landscape phones: the sidebar becomes an icon rail so tables keep their columns. */
+@media (min-width: 768px) and (max-width: 1099px) {
+  .staff-shell,
+  .staff-shell.sidebar-collapsed {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+  .staff-shell aside {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    align-items: stretch;
+    height: 100dvh;
+    overflow-y: auto;
+    padding: 12px max(10px, env(safe-area-inset-left));
+  }
+  .sidebar-top {
+    justify-content: center;
+    min-height: 48px;
+  }
+  .staff-shell aside .brand {
+    justify-content: center;
+    min-width: 44px;
+  }
+  .staff-shell aside .brand > span,
+  .staff-shell aside nav a > span:not(.sidebar-icon),
+  .staff-shell aside .sign-out-label,
+  .sidebar-group > p,
+  .sidebar-user,
+  .sidebar-collapse {
+    display: none;
+  }
+  .staff-shell aside nav a {
+    justify-content: center;
+    min-height: 44px;
+    padding: 6px;
+  }
+  .staff-shell aside > .button {
+    padding-inline: 0;
+  }
+  .staff-content {
+    padding: 24px 20px 40px;
+  }
+}
+
+/* Phones. */
+@media (max-width: 767px) {
+  .staff-shell aside {
+    display: none;
+  }
+  .staff-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 56px;
+    padding: 6px max(16px, env(safe-area-inset-right)) 6px max(16px, env(safe-area-inset-left));
+    background: #fffffff2;
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--line);
+  }
+  .staff-topbar .brand {
+    font-size: 18px;
+    color: #0c6b45;
+  }
+  .staff-topbar .brand small {
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .staff-topbar-user {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .staff-tabs {
+    position: fixed;
+    z-index: 15;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    background: white;
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .staff-tabs a,
+  .staff-tabs button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 58px;
+    padding: 6px 2px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: capitalize;
+  }
+  .staff-tabs [aria-current='page'],
+  .staff-tabs .tab-active {
+    color: #0c7a50;
+    font-weight: 700;
+  }
+  .staff-content {
+    padding: 20px 16px calc(92px + env(safe-area-inset-bottom));
+  }
+  .more-group h3 {
+    margin: 18px 0 8px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .more-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .more-links a {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 48px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    text-transform: capitalize;
+  }
+  .more-links a[aria-current='page'] {
+    border-color: #0c7a50;
+    color: #0c7a50;
+  }
+  .more-actions {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0 10px;
+  }
+  .more-actions .install-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Passenger navigation. */
+  .mobile-nav {
+    padding: 4px 0 calc(4px + env(safe-area-inset-bottom));
+  }
+  .mobile-nav a,
+  .mobile-nav .install-btn {
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+    min-height: 50px;
+    font-size: 11px;
+  }
+  .mobile-nav a[aria-current='page'] {
+    color: var(--blue);
+    font-weight: 700;
+  }
+  .mobile-nav .install-app {
+    position: relative;
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .mobile-nav .install-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+  }
+  .mobile-nav .install-hint {
+    position: absolute;
+    top: auto;
+    right: 6px;
+    bottom: calc(100% + 8px);
+    left: auto;
+    width: 220px;
+  }
+  .site-footer {
+    padding-bottom: calc(90px + env(safe-area-inset-bottom));
+  }
+  /* The keyboard needs that space, and a bar floating above it hides the field being typed in.
+     The bar returns after a short delay so the tap that closes the keyboard still reaches its button. */
+  .mobile-nav,
+  .staff-tabs {
+    transition: visibility 0s 0.3s;
+  }
+  body:has(input:not([type='checkbox'], [type='radio'], [type='file']):focus, textarea:focus) .mobile-nav,
+  body:has(input:not([type='checkbox'], [type='radio'], [type='file']):focus, textarea:focus) .staff-tabs {
+    visibility: hidden;
+    transition: none;
+  }
+
+  /* Actions share rows instead of stacking one full-width button per line. */
+  .row > .button,
+  .row > button {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-inline: 12px;
+    white-space: normal;
+  }
+  .toolbar-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .toolbar select {
+    flex: 1 1 140px;
+    min-width: 0;
+    width: auto;
+  }
+  .toolbar > .button,
+  .toolbar > button {
+    flex: 0 0 auto;
+  }
+  .hero-sun {
+    display: none;
+  }
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .journey-step-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .journey-step {
+    min-height: 0;
+    padding: 18px;
+  }
+  .journey-step h3 {
+    margin-top: 10px;
+  }
+  .update-banner {
+    bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Short landscape screens keep as much height as possible for content. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .header {
+    height: 60px;
+  }
+  .hero {
+    min-height: 0;
+  }
+  .hero-inner {
+    padding-block: 28px 72px;
+  }
+  .sheet {
+    max-height: 100dvh;
+    border-radius: 18px 18px 0 0;
+  }
+  .mobile-nav a,
+  .staff-tabs a,
+  .staff-tabs button {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 44px;
+  }
+}
+
+/* Notched phones in landscape. */
+@media (orientation: landscape) {
+  .header,
+  .container,
+  .site-footer {
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+  }
+}
+
+/* Installed app: nothing may sit under the status bar. */
+@media (display-mode: standalone) {
+  .header {
+    height: calc(72px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+  .staff-topbar {
+    padding-top: max(6px, env(safe-area-inset-top));
+  }
+}
+
+/* The public header and tabs are removed after hydration on staff pages; this stops them flashing first. */
+body:has(.staff-shell) .mobile-nav,
+body:has(.staff-shell) .header,
+body:has(.staff-shell) .site-footer {
+  display: none;
+}

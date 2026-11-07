@@ -6,6 +6,7 @@ import { PwaRegister } from '@/components/pwa';
 import { ImageFallback } from '@/components/image-fallback';
 import { getSiteContent } from '@/lib/site-content-db';
 import './globals.css';
+import './responsive.css';
 const poppins = Poppins({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
@@ -26,7 +27,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 export async function generateViewport(): Promise<Viewport> {
   const { theme } = await getSiteContent();
-  return { themeColor: theme.primary, width: 'device-width', initialScale: 1, viewportFit: 'cover' };
+  return { themeColor: theme.primary, width: 'device-width', initialScale: 1, viewportFit: 'cover', interactiveWidget: 'resizes-content' };
 }
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const site = await getSiteContent();
@@ -35,7 +36,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body suppressHydrationWarning className={poppins.className + ' ' + display.variable} style={{ ['--blue' as string]: site.theme.primary, ['--navy' as string]: site.theme.dark }}>
         <Providers site={site}>
           <PwaRegister />
-        <ImageFallback />
+          <ImageFallback />
           <Header site={site} />
           {children}
           <Footer site={site} />

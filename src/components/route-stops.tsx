@@ -265,7 +265,7 @@ export function RouteStops({ id }: { id: string }) {
           <Button type="button" disabled={!stops || problems.length > 0 || middle.some((s) => !s.locationId) || saveStops.isPending} onClick={() => (setError(null), setNotice(''), saveStops.mutate())}>
             Save stops
           </Button>
-          <Link href="/admin/routes">Back to routes</Link>
+          <Link href="/admin/routes" className="blue">Back to routes</Link>
         </div>
       </section>
       <section className="card">

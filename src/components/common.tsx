@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { BusFront, ArrowRight, ShieldCheck, Ticket, Search, House, LogOut, ChevronLeft, BarChart3, BookOpen, CalendarClock, CarFront, CreditCard, FileText, LayoutDashboard, Map, Settings, UserRound, Users, WalletCards, History } from 'lucide-react';
+import { BusFront, ArrowRight, ShieldCheck, Ticket, Search, House, LogOut, ChevronLeft, Menu, BarChart3, BookOpen, CalendarClock, CarFront, CreditCard, FileText, LayoutDashboard, Map, Settings, UserRound, Users, WalletCards, History } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -228,18 +228,19 @@ export function Header({ site }: { site: SiteContent }) {
         </nav>
       </header>
       <nav className="mobile-nav" aria-label="Main navigation">
-        <Link href="/">
+        <Link href="/" aria-current={path === '/' ? 'page' : undefined}>
           <House size={20} />
           {site.copy.nav.home}
         </Link>
-        <Link href="/search">
+        <Link href="/search" aria-current={path?.startsWith('/search') ? 'page' : undefined}>
           <Search size={20} />
           {site.copy.nav.findRide}
         </Link>
-        <Link href="/track-booking">
+        <Link href="/track-booking" aria-current={path?.startsWith('/track-booking') ? 'page' : undefined}>
           <Ticket size={20} />
           {site.copy.nav.myBooking}
         </Link>
+        <InstallApp />
       </nav>
     </>
   );
@@ -313,6 +314,7 @@ export function StaffShell({
 }) {
   const pathname = useHydratedPathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const groups = role === 'admin'
     ? [
         { label: 'Overview', links: ['dashboard'] },
@@ -330,8 +332,25 @@ export function StaffShell({
     trips: CalendarClock, bookings: BookOpen, payments: CreditCard, 'payment-qr': CreditCard, reports: BarChart3, tickets: Ticket,
     website: FileText, settings: Settings, profile: UserRound, payment: CreditCard, schedule: CalendarClock, passengers: Users, history: History,
   };
+  const labelOf = (l: string) => labels[l] ?? l.replaceAll('-', ' ');
+  const hrefOf = (l: string) => '/' + role + '/' + l;
+  const isActive = (l: string) => pathname === hrefOf(l) || !!pathname?.startsWith(hrefOf(l) + '/');
+  // The four sections people use most on a phone; everything else is one tap away under More.
+  const tabs = role === 'admin' ? ['dashboard', 'bookings', 'payments', 'trips'] : ['trips', 'bookings', 'schedule', 'passengers'];
+  const tabLabels: Record<string, string> = { schedule: 'Publish' };
+  const signOut = async () => {
+    await api('/api/auth/logout', { method: 'POST', body: '{}' });
+    location.href = '/staff/sign-in';
+  };
   return (
     <div className={'staff-shell' + (collapsed ? ' sidebar-collapsed' : '')}>
+      <header className="staff-topbar">
+        <Link className="brand" href={'/' + role} aria-label="SajiloYatra home">
+          <BusFront size={22} />
+          <span>SajiloYatra<small>{role} portal</small></span>
+        </Link>
+        <span className="staff-topbar-user">{name}</span>
+      </header>
       <aside>
         <div className="sidebar-top">
         <Link className="brand" href={'/' + role} aria-label="SajiloYatra home">
@@ -347,28 +366,62 @@ export function StaffShell({
               const href = '/' + role + '/' + l;
               const active = pathname === href || !!pathname?.startsWith(href + '/');
               const Icon = icons[l] ?? FileText;
-              return <Link key={l} href={href} title={collapsed ? (labels[l] ?? l.replaceAll('-', ' ')) : undefined} className={active ? 'nav-active' : undefined} aria-current={active ? 'page' : undefined}>
+              return <Link key={l} href={href} title={labelOf(l)} aria-label={labelOf(l)} className={active ? 'nav-active' : undefined} aria-current={active ? 'page' : undefined}>
                 <span className={'sidebar-icon tone-' + (index % 5)}><Icon size={17} /></span>
-                {!collapsed && <span>{labels[l] ?? l.replaceAll('-', ' ')}</span>}
+                {!collapsed && <span>{labelOf(l)}</span>}
               </Link>;
             })}
           </section>)}
         </nav>
         {!collapsed && <small className="sidebar-user">{name}<span>{role}</span></small>}
-        <Button
-          variant="outline"
-          onClick={async () => {
-            await api('/api/auth/logout', { method: 'POST', body: '{}' });
-            location.href = '/staff/sign-in';
-          }}
-        >
+        <Button variant="outline" aria-label="Sign out" onClick={signOut}>
           <LogOut size={16} />
-          {!collapsed && 'Sign out'}
+          {!collapsed && <span className="sign-out-label">Sign out</span>}
         </Button>
       </aside>
       <div className="staff-content">
         {children}
       </div>
+      <nav className="staff-tabs" aria-label="Main navigation">
+        {tabs.map((l) => {
+          const Icon = icons[l] ?? FileText;
+          return (
+            <Link key={l} href={hrefOf(l)} aria-current={isActive(l) ? 'page' : undefined}>
+              <Icon size={21} />
+              {tabLabels[l] ?? labelOf(l)}
+            </Link>
+          );
+        })}
+        <button type="button" className={tabs.some(isActive) ? undefined : 'tab-active'} aria-haspopup="dialog" onClick={() => setMoreOpen(true)}>
+          <Menu size={21} />
+          More
+        </button>
+      </nav>
+      <Sheet open={moreOpen} onOpenChange={setMoreOpen} title="All sections" description={name}>
+        {groups.map((group) => (
+          <section className="more-group" key={group.label}>
+            <h3>{group.label}</h3>
+            <div className="more-links">
+              {group.links.map((l) => {
+                const Icon = icons[l] ?? FileText;
+                return (
+                  <Link key={l} href={hrefOf(l)} aria-current={isActive(l) ? 'page' : undefined} onClick={() => setMoreOpen(false)}>
+                    <Icon size={18} />
+                    {labelOf(l)}
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+        <div className="more-actions">
+          <InstallApp />
+          <Button variant="outline" onClick={signOut}>
+            <LogOut size={16} />
+            Sign out
+          </Button>
+        </div>
+      </Sheet>
     </div>
   );
 }

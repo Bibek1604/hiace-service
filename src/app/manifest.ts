@@ -13,7 +13,7 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     start_url: '/?source=pwa',
     scope: '/',
     display: 'standalone',
-    orientation: 'portrait',
+    orientation: 'any',
     background_color: '#ffffff',
     theme_color: theme.primary,
     categories: ['travel', 'transportation'],
