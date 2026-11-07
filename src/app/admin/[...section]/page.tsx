@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { AdminDashboard, AdminResource, VehicleProfile } from '@/components/admin';
 import { Payments } from '@/components/payments';
-import { TicketCheckPage } from '@/components/admin';
+import { AuditLogPage, TicketCheckPage } from '@/components/admin';
 import { LayoutEditor, LayoutsAdmin } from '@/components/layouts';
 import { RouteStops } from '@/components/route-stops';
 import { DriverRequests } from '@/components/driver-requests';
@@ -15,6 +15,7 @@ export default async function Page({ params }: { params: Promise<{ section: stri
   if (resource === 'website') return <SiteContentAdmin />;
   if (resource === 'payments') return <Payments />;
   if (resource === 'tickets') return <TicketCheckPage />;
+  if (resource === 'audit') return <AuditLogPage />;
   if (resource === 'seat-layouts') return section[1] ? <LayoutEditor id={section[1]} /> : <LayoutsAdmin />;
   if (resource === 'routes' && section[1] && section[1] !== 'new') return <RouteStops id={section[1]} />;
   if (resource === 'vehicles' && section[1] && section[1] !== 'new')

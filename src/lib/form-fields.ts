@@ -79,7 +79,7 @@ export const fields: Record<string, Field[]> = {
     { key: 'distanceKm', label: 'Distance (km)', type: 'number', required: true },
     {
       key: 'durationMinutes',
-      label: 'Estimated duration (minutes)',
+      label: 'Estimated travel time (hours)',
       type: 'number',
       required: true,
     },

@@ -29,7 +29,7 @@ export function DownloadTicket({ booking }: { booking: BookingView }) {
     try {
       const { ticket } = await api<{ ticket: string }>('/api/bookings/' + booking.id + '/ticket');
       const seats = booking.seats.map((seat) => seat.tripSeat.vehicleSeat.label).join(', ');
-      const route = `${booking.trip.route.origin.name} → ${booking.trip.route.destination.name}`;
+      const route = `${booking.journey.from} → ${booking.journey.to}`;
       const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sajilo Yatra ticket ${escapeHtml(booking.reference)}</title>
@@ -41,9 +41,9 @@ export function DownloadTicket({ booking }: { booking: BookingView }) {
 <span class="verified">✓ PAYMENT VERIFIED · PAID</span><p class="reference">Booking reference<strong>${escapeHtml(booking.reference)}</strong></p>
 <p class="route">${escapeHtml(route)}</p><dl>
 <div><dt>Passenger</dt><dd>${escapeHtml(booking.customer.name)}</dd></div><div><dt>Contact</dt><dd>${escapeHtml(booking.customer.phone)}</dd></div>
-<div><dt>Departure</dt><dd>${escapeHtml(ticketDate(booking.trip.departure))}<br>${escapeHtml(nepalTime(booking.trip.departure))} Nepal time</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml(booking.trip.vehicle.name)}<br>${escapeHtml(booking.trip.vehicle.registration)}</dd></div>
+<div><dt>Boards at</dt><dd>${escapeHtml(ticketDate(booking.journey.boardsAt))}<br>${escapeHtml(nepalTime(booking.journey.boardsAt))} Nepal time</dd></div><div><dt>Vehicle</dt><dd>${escapeHtml(booking.trip.vehicle.name)}<br>${escapeHtml(booking.trip.vehicle.registration)}</dd></div>
 <div><dt>Seats</dt><dd>${escapeHtml(seats)}</dd></div><div><dt>Total paid</dt><dd>${escapeHtml(money(booking.amount))}</dd></div>
-<div><dt>Boarding point</dt><dd>${escapeHtml(booking.trip.boardingPoint)}</dd></div><div><dt>Drop-off point</dt><dd>${escapeHtml(booking.trip.dropPoint)}</dd></div></dl>
+<div><dt>Boarding point</dt><dd>${escapeHtml(booking.journey.boardingPoint)}</dd></div><div><dt>Drop-off point</dt><dd>${escapeHtml(booking.journey.dropPoint)}</dd></div><div><dt>Driver contact</dt><dd>${escapeHtml(booking.trip.vehicle.operatorContact)}</dd></div></dl>
 <p class="code"><strong>Secure verification code</strong><br>${escapeHtml(ticket)}</p></main><footer>Show this ticket to your driver and arrive at least 20 minutes before departure. Keep this file available until your journey is complete.</footer></article></body></html>`;
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       const url = URL.createObjectURL(blob);

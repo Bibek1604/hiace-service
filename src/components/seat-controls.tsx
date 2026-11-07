@@ -2,18 +2,24 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { TripView } from '@/lib/types';
-import { api, ErrorBox, adminApi } from './common';
+import { api, ErrorBox, adminApi, useAsk } from './common';
 import { Button } from './ui/button';
 export function SeatControls({ tripId }: { tripId: string }) {
   const [error, setError] = useState<unknown>(null),
     [pending, setPending] = useState('');
+  const { ask, dialog } = useAsk();
   const q = useQuery({
     queryKey: ['admin-seats', tripId],
     queryFn: () => api<TripView>('/api/trips/' + tripId),
   });
   async function toggle(id: string, blocked: boolean) {
-    const note = window.prompt('Record the reason for this inventory change:');
-    if (!note || note.trim().length < 3) return;
+    const answer = await ask({
+      title: blocked ? 'Block this seat' : 'Unblock this seat',
+      confirm: blocked ? 'Block seat' : 'Unblock seat',
+      fields: [{ name: 'note', label: 'Reason for this inventory change', type: 'textarea', required: true, minLength: 3, maxLength: 1000 }],
+    });
+    if (!answer) return;
+    const note = answer.note;
     setPending(id);
     setError(null);
     try {
@@ -46,6 +52,7 @@ export function SeatControls({ tripId }: { tripId: string }) {
         ))}
       </div>
       <ErrorBox error={error || q.error} />
+      {dialog}
     </div>
   );
 }

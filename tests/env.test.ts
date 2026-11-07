@@ -45,6 +45,11 @@ test('Vercel flags incomplete Prisma transaction-pooler settings', () => {
   assert.ok(r.warnings.some((w) => /connection_limit=1/.test(w)));
 });
 
+test('a transaction pooler is warned about outside Vercel too', () => {
+  const r = checkEnv({ ...good, DATABASE_URL: 'postgresql://app:secret@pooler.example.com:6543/booking' });
+  assert.ok(r.warnings.some((w) => /pgbouncer=true/.test(w)));
+});
+
 test('partial storage, mail or SMS setup and a missing delivery channel are warnings, not errors', () => {
   const r = checkEnv({ ...good, AWS_SECRET_ACCESS_KEY: undefined, MAIL_FROM: undefined, SMS_HTTP_URL: 'https://sms' });
   assert.deepEqual(r.errors, []);

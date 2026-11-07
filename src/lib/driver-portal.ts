@@ -5,8 +5,11 @@ import { db } from './db';
 import { ApiError, hash } from './security';
 import { hashPassword, verifyPassword } from './password';
 import { remove, save } from './admin';
-import { cancelTrip, tripTransitionAllowed } from './cancellations';
-import { reserve, review, serial } from './bookings';
+import { cancelBooking, CANCELLABLE, cancelTrip, tripTransitionAllowed } from './cancellations';
+import { expire, reserve, review, serial } from './bookings';
+import { queueTicketEmail } from './booking-email';
+import { DAY_MS, nepalDayStart } from './nepal-time';
+import { normalizePhone } from './phone';
 import { seatStateFor, type TripStop } from './inventory';
 import { archiveLayout, createLayout, publishLayout } from './layouts';
 import { buildSequence, validateSequence } from './route-stops';
@@ -341,60 +344,90 @@ const nepalDeparture = (date: string, minutes: number) => {
 };
 const dayValue = (date: string) => new Date(`${date}T00:00:00.000Z`);
 
-async function assertTripWindowFree(driverId: string, vehicleId: string, departure: Date, arrival: Date) {
-  const clash = await db.trip.findFirst({
+type Slot = { departure: Date; arrival: Date; vehicleId: string };
+
+/**
+ * Refuses a set of new departures if any overlaps another of the set or an existing trip of the driver or the
+ * vehicle. It reads the whole date range once, so a year-long schedule costs one query, not one per day.
+ */
+async function assertSlotsFree(driverId: string, slots: Slot[]) {
+  if (!slots.length) return;
+  const clash = () => new ApiError(409, 'This vehicle or driver already has an overlapping trip.');
+  // Every slot here shares one driver, so any two that overlap in time conflict.
+  const ordered = [...slots].sort((x, y) => x.departure.getTime() - y.departure.getTime());
+  for (let i = 1; i < ordered.length; i++) if (ordered[i].departure < ordered[i - 1].arrival) throw clash();
+  const last = ordered.reduce((max, slot) => (slot.arrival > max ? slot.arrival : max), ordered[0].arrival);
+  const existing = await db.trip.findMany({
     where: {
       status: { in: [...activeTripStatuses] },
-      departure: { lt: arrival },
-      arrival: { gt: departure },
-      OR: [{ vehicleId }, { assignments: { some: { driverId, endedAt: null } } }],
+      departure: { lt: last },
+      arrival: { gt: ordered[0].departure },
+      OR: [{ vehicleId: { in: [...new Set(slots.map((slot) => slot.vehicleId))] } }, { assignments: { some: { driverId, endedAt: null } } }],
     },
-    select: { id: true },
+    select: { departure: true, arrival: true },
   });
-  if (clash) throw new ApiError(409, 'This vehicle or driver already has an overlapping trip.');
+  for (const slot of slots) if (existing.some((t) => t.departure < slot.arrival && t.arrival > slot.departure)) throw clash();
 }
 
-async function scheduleTrips(driverId: string, scheduleId: string, onlyAfter?: Date) {
-  const schedule = await db.tripSchedule.findUnique({
-    where: { id: scheduleId },
-    include: { route: { include: { origin: true, destination: true } } },
+/** The departures of a schedule still to come, in date order. */
+function scheduleSlots(
+  range: { startsOn: Date; endsOn: Date; departureMinutes: number; vehicleId: string },
+  durationMinutes: number,
+  onlyAfter?: Date,
+) {
+  const now = new Date();
+  return dateRange(range.startsOn, range.endsOn)
+    .map((date) => {
+      const departure = nepalDeparture(date, range.departureMinutes);
+      return { date, departure, arrival: new Date(departure.getTime() + durationMinutes * 60000), vehicleId: range.vehicleId };
+    })
+    .filter((slot) => slot.departure > now && (!onlyAfter || slot.departure > onlyAfter));
+}
+
+/** Publishing is all-or-nothing: whatever one attempt created before it failed is taken back. */
+async function discardPublished(driverId: string, operatorId: string, tripIds: string[], scheduleIds: string[]) {
+  await serial(async (tx) => {
+    const unsold = (await tx.trip.findMany({ where: { id: { in: tripIds }, bookings: { none: {} } }, select: { id: true } })).map((t) => t.id);
+    await tx.tripDriverAssignment.deleteMany({ where: { tripId: { in: unsold } } });
+    await tx.tripSeat.deleteMany({ where: { tripId: { in: unsold } } });
+    await tx.tripFare.deleteMany({ where: { tripId: { in: unsold } } });
+    await tx.trip.deleteMany({ where: { id: { in: unsold } } });
+    await tx.tripSchedule.deleteMany({ where: { id: { in: scheduleIds } } });
+    await tx.auditLog.create({ data: { actorId: driverId, operatorId, action: 'PUBLISH_ROLLED_BACK', targetId: scheduleIds[0] ?? driverId, details: { tripIds: unsold, scheduleIds } } });
   });
-  if (!schedule) throw new ApiError(404, 'Schedule not found.');
-  const dates = dateRange(schedule.startsOn, schedule.endsOn).filter((date) => {
-    const departure = nepalDeparture(date, schedule.departureMinutes);
-    return departure > new Date() && (!onlyAfter || departure > onlyAfter);
-  });
-  const candidates = dates.map((date) => {
-    const departure = nepalDeparture(date, schedule.departureMinutes);
-    return { date, departure, arrival: new Date(departure.getTime() + schedule.route.durationMinutes * 60000) };
-  });
-  for (const candidate of candidates)
-    await assertTripWindowFree(driverId, schedule.vehicleId, candidate.departure, candidate.arrival);
-  const created = [];
-  for (const { date, departure, arrival } of candidates) {
-    const existing = await db.trip.findFirst({ where: { scheduleId, departure }, select: { id: true } });
-    if (existing) continue;
-    created.push(
-      await save('trips', {
-        vehicleId: schedule.vehicleId,
-        routeId: schedule.routeId,
-        paymentQRId: schedule.paymentQRId,
-        driverId,
-        departure: departure.toISOString(),
-        arrival: arrival.toISOString(),
-        boardingPoint: schedule.boardingPoint || schedule.route.origin.name,
-        dropPoint: schedule.dropPoint || schedule.route.destination.name,
-        fare: schedule.fare,
-        bookingOpen: schedule.status === 'PUBLISHED',
-        bookingOpensAt: new Date().toISOString(),
-        bookingClosesAt: departure.toISOString(),
-        scheduleId,
-        recurringRule: JSON.stringify({ scheduleId, date }),
-        status: 'SCHEDULED',
-      }, driverId, false, schedule.operatorId),
-    );
+}
+
+const assertLicensed = (licenseExpiry: Date, slots: { arrival: Date }[]) => {
+  if (slots.some((slot) => slot.arrival > licenseExpiry))
+    throw new ApiError(400, 'Your driving licence expires before the last of these trips. Ask the admin to update it.');
+};
+
+async function createScheduleTrips(
+  schedule: { id: string; operatorId: string; vehicleId: string; routeId: string; paymentQRId: string; fare: number; boardingPoint: string; dropPoint: string; status: string },
+  driverId: string,
+  slots: (Slot & { date: string })[],
+  created: string[],
+) {
+  for (const { date, departure, arrival } of slots) {
+    const trip = await save('trips', {
+      vehicleId: schedule.vehicleId,
+      routeId: schedule.routeId,
+      paymentQRId: schedule.paymentQRId,
+      driverId,
+      departure: departure.toISOString(),
+      arrival: arrival.toISOString(),
+      boardingPoint: schedule.boardingPoint,
+      dropPoint: schedule.dropPoint,
+      fare: schedule.fare,
+      bookingOpen: schedule.status === 'PUBLISHED',
+      bookingOpensAt: new Date().toISOString(),
+      bookingClosesAt: departure.toISOString(),
+      scheduleId: schedule.id,
+      recurringRule: JSON.stringify({ scheduleId: schedule.id, date }),
+      status: 'SCHEDULED',
+    }, driverId, false, schedule.operatorId);
+    created.push(trip.id);
   }
-  return created;
 }
 
 /** Publish selected existing routes as independent daily trips without duplicating route records. */
@@ -403,8 +436,8 @@ export async function createOwnSchedules(driverId: string, raw: unknown) {
   const input = scheduleInput.parse(raw);
   const startsOn = dayValue(input.startsOn), endsOn = dayValue(input.endsOn);
   if (dateRange(startsOn, endsOn).length > 366) throw new ApiError(400, 'A schedule can cover at most 366 days.');
-  const batchId = crypto.randomUUID();
-  const schedules = [];
+  // Every plan is checked against everything else before anything is written.
+  const plans = [];
   for (const plan of input.plans) {
     const [route, vehicle, qr] = await Promise.all([
       db.route.findFirst({ where: { id: plan.routeId, operatorId: driver.operatorId, active: true }, include: { origin: true, destination: true } }),
@@ -414,36 +447,44 @@ export async function createOwnSchedules(driverId: string, raw: unknown) {
     if (!route || !vehicle || !qr) throw new ApiError(400, 'Choose active routes, vehicles, and payment accounts that belong to you.');
     const [hours, minutes] = plan.departureTime.split(':').map(Number);
     const departureMinutes = hours * 60 + minutes;
-    const candidateDeparture = nepalDeparture(input.startsOn, departureMinutes);
-    const candidateArrival = new Date(candidateDeparture.getTime() + route.durationMinutes * 60000);
-    await assertTripWindowFree(driverId, vehicle.id, candidateDeparture, candidateArrival);
-    const schedule = await db.tripSchedule.create({
-      data: {
-        batchId,
-        operatorId: driver.operatorId,
-        driverId,
-        vehicleId: vehicle.id,
-        routeId: route.id,
-        paymentQRId: qr.id,
-        fare: plan.fare ?? route.baseFare,
-        departureMinutes,
-        startsOn,
-        endsOn,
-        boardingPoint: plan.boardingPoint || route.origin.name,
-        dropPoint: plan.dropPoint || route.destination.name,
-        status: 'PUBLISHED',
-      },
-    });
-    try {
-      const trips = await scheduleTrips(driverId, schedule.id);
-      schedules.push({ ...schedule, created: trips.length });
-    } catch (error) {
-      await db.tripSchedule.delete({ where: { id: schedule.id } });
-      throw error;
-    }
+    plans.push({ plan, route, vehicle, qr, departureMinutes, slots: scheduleSlots({ startsOn, endsOn, departureMinutes, vehicleId: vehicle.id }, route.durationMinutes) });
   }
-  await db.auditLog.create({ data: { actorId: driverId, operatorId: driver.operatorId, action: 'PUBLISH_TRIP_SCHEDULES', targetId: batchId, details: { schedules: schedules.length, startsOn: input.startsOn, endsOn: input.endsOn } } });
-  return { batchId, schedules, created: schedules.reduce((total, schedule) => total + schedule.created, 0) };
+  const slots = plans.flatMap((p) => p.slots);
+  if (!slots.length) throw new ApiError(400, 'Every departure in those dates is already in the past. Choose later dates.');
+  assertLicensed(driver.licenseExpiry, slots);
+  await assertSlotsFree(driverId, slots);
+
+  const batchId = crypto.randomUUID();
+  const schedules = [], tripIds: string[] = [], scheduleIds: string[] = [];
+  try {
+    for (const { plan, route, vehicle, qr, departureMinutes, slots: own } of plans) {
+      const schedule = await db.tripSchedule.create({
+        data: {
+          batchId,
+          operatorId: driver.operatorId,
+          driverId,
+          vehicleId: vehicle.id,
+          routeId: route.id,
+          paymentQRId: qr.id,
+          fare: plan.fare ?? route.baseFare,
+          departureMinutes,
+          startsOn,
+          endsOn,
+          boardingPoint: plan.boardingPoint || route.origin.name,
+          dropPoint: plan.dropPoint || route.destination.name,
+          status: 'PUBLISHED',
+        },
+      });
+      scheduleIds.push(schedule.id);
+      await createScheduleTrips(schedule, driverId, own, tripIds);
+      schedules.push({ ...schedule, created: own.length });
+    }
+  } catch (error) {
+    await discardPublished(driverId, driver.operatorId, tripIds, scheduleIds);
+    throw error;
+  }
+  await db.auditLog.create({ data: { actorId: driverId, operatorId: driver.operatorId, action: 'PUBLISH_TRIP_SCHEDULES', targetId: batchId, details: { schedules: schedules.length, trips: tripIds.length, startsOn: input.startsOn, endsOn: input.endsOn } } });
+  return { batchId, schedules, created: tripIds.length };
 }
 
 export async function ownSchedules(driverId: string) {
@@ -459,28 +500,65 @@ export async function ownSchedules(driverId: string) {
 export async function controlOwnSchedule(driverId: string, scheduleId: string, raw: unknown) {
   const driver = await me(driverId);
   const input = scheduleControl.parse(raw);
-  const schedule = await db.tripSchedule.findFirst({ where: { id: scheduleId, driverId, operatorId: driver.operatorId } });
+  const schedule = await db.tripSchedule.findFirst({ where: { id: scheduleId, driverId, operatorId: driver.operatorId }, include: { route: { select: { durationMinutes: true } } } });
   if (!schedule) throw new ApiError(404, 'Schedule not found.');
-  const future = { scheduleId, departure: { gt: new Date() }, status: 'SCHEDULED' as const };
+  const future = () => ({ scheduleId, departure: { gt: new Date() }, status: 'SCHEDULED' as const });
+  const action = 'DRIVER_' + input.action.toUpperCase() + '_SCHEDULE';
+  const audit = (tx: Prisma.TransactionClient, details: Prisma.InputJsonObject) =>
+    tx.auditLog.create({ data: { actorId: driverId, operatorId: driver.operatorId, action, targetId: scheduleId, details } });
   if (input.action === 'pause') {
-    if (schedule.status !== 'PUBLISHED') throw new ApiError(409, 'Only published schedules can be paused.');
-    await db.$transaction([db.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'PAUSED' } }), db.trip.updateMany({ where: future, data: { bookingOpen: false } })]);
+    await serial(async (tx) => {
+      const now = await tx.tripSchedule.findUniqueOrThrow({ where: { id: scheduleId } });
+      if (now.status !== 'PUBLISHED') throw new ApiError(409, 'Only published schedules can be paused.');
+      const open = await tx.trip.findMany({ where: { ...future(), bookingOpen: true }, select: { id: true } });
+      await tx.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'PAUSED' } });
+      await tx.trip.updateMany({ where: { id: { in: open.map((t) => t.id) } }, data: { bookingOpen: false } });
+      // Resume reopens exactly these, so a trip the driver closed on its own stays closed.
+      await audit(tx, { ...input, closedTripIds: open.map((t) => t.id) });
+    });
   } else if (input.action === 'resume') {
-    if (schedule.status !== 'PAUSED') throw new ApiError(409, 'Only paused schedules can be resumed.');
-    await db.$transaction([db.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'PUBLISHED' } }), db.trip.updateMany({ where: future, data: { bookingOpen: true } })]);
+    await serial(async (tx) => {
+      const now = await tx.tripSchedule.findUniqueOrThrow({ where: { id: scheduleId } });
+      if (now.status !== 'PAUSED') throw new ApiError(409, 'Only paused schedules can be resumed.');
+      const pause = await tx.auditLog.findFirst({ where: { targetId: scheduleId, action: 'DRIVER_PAUSE_SCHEDULE' }, orderBy: { createdAt: 'desc' } });
+      const closed = (pause?.details as { closedTripIds?: string[] } | null)?.closedTripIds;
+      await tx.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'PUBLISHED' } });
+      await tx.trip.updateMany({ where: { ...future(), ...(closed ? { id: { in: closed } } : {}) }, data: { bookingOpen: true } });
+      await audit(tx, input);
+    });
   } else if (input.action === 'extend') {
+    if (schedule.status !== 'PUBLISHED' && schedule.status !== 'PAUSED') throw new ApiError(409, 'Only a live schedule can be extended.');
     const endsOn = dayValue(input.endsOn);
     if (endsOn <= schedule.endsOn) throw new ApiError(400, 'Choose a later end date.');
     if (dateRange(schedule.startsOn, endsOn).length > 366) throw new ApiError(400, 'A schedule can cover at most 366 days.');
+    // Only the days after the old end are new; the old last day already has its trip.
+    const slots = scheduleSlots({ startsOn: schedule.startsOn, endsOn, departureMinutes: schedule.departureMinutes, vehicleId: schedule.vehicleId }, schedule.route.durationMinutes, nepalDeparture(schedule.endsOn.toISOString().slice(0, 10), schedule.departureMinutes));
+    assertLicensed(driver.licenseExpiry, slots);
+    await assertSlotsFree(driverId, slots);
     await db.tripSchedule.update({ where: { id: scheduleId }, data: { endsOn } });
-    try { await scheduleTrips(driverId, scheduleId, schedule.endsOn); } catch (error) { await db.tripSchedule.update({ where: { id: scheduleId }, data: { endsOn: schedule.endsOn } }); throw error; }
+    const created: string[] = [];
+    try {
+      await createScheduleTrips(schedule, driverId, slots, created);
+    } catch (error) {
+      await db.tripSchedule.update({ where: { id: scheduleId }, data: { endsOn: schedule.endsOn } });
+      await discardPublished(driverId, driver.operatorId, created, []);
+      throw error;
+    }
+    await audit(db as unknown as Prisma.TransactionClient, input);
   } else {
-    if (schedule.status === 'CANCELLED') throw new ApiError(409, 'This schedule is already cancelled.');
-    const booked = await db.trip.findFirst({ where: { ...future, bookings: { some: { status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } } } }, select: { id: true } });
-    if (booked) throw new ApiError(409, 'A future trip has bookings. Cancel it individually through admin so passengers are protected.');
-    await db.$transaction([db.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'CANCELLED' } }), db.trip.updateMany({ where: future, data: { status: 'CANCELLED', bookingOpen: false } })]);
+    // Checked and applied together, so a passenger cannot slip a booking in between.
+    await serial(async (tx) => {
+      const now = await tx.tripSchedule.findUniqueOrThrow({ where: { id: scheduleId } });
+      if (now.status === 'CANCELLED') throw new ApiError(409, 'This schedule is already cancelled.');
+      const booked = await tx.trip.findFirst({ where: { ...future(), bookings: { some: { status: { in: [...CANCELLABLE] } } } }, select: { id: true } });
+      if (booked) throw new ApiError(409, 'A future trip has bookings. Cancel those bookings first, or ask the admin to cancel the trip so passengers are refunded.');
+      const trips = await tx.trip.findMany({ where: future(), select: { id: true } });
+      await tx.tripSchedule.update({ where: { id: scheduleId }, data: { status: 'CANCELLED' } });
+      await tx.trip.updateMany({ where: { id: { in: trips.map((t) => t.id) } }, data: { status: 'CANCELLED', bookingOpen: false } });
+      await tx.tripDriverAssignment.updateMany({ where: { tripId: { in: trips.map((t) => t.id) }, endedAt: null }, data: { endedAt: new Date() } });
+      await audit(tx, input);
+    });
   }
-  await db.auditLog.create({ data: { actorId: driverId, operatorId: driver.operatorId, action: 'DRIVER_' + input.action.toUpperCase() + '_SCHEDULE', targetId: scheduleId, details: input } });
   return ownSchedules(driverId);
 }
 /** A driver creates departures using their own approved-in-the-safety-sense (validated) resources. */
@@ -492,6 +570,7 @@ export async function createOwnTrip(driverId: string, raw: unknown) {
     include: { origin: true, destination: true },
   });
   if (!route) throw new ApiError(404, 'Route not found.');
+  if (!route.active) throw new ApiError(400, 'This route is deactivated. Choose an active route.');
   const qr = t.paymentQRId
     ? await db.paymentQR.findFirst({ where: { id: t.paymentQRId, operatorId: d.operatorId, active: true } })
     : await db.paymentQR.findFirst({ where: { operatorId: d.operatorId, active: true, isDefault: true } });
@@ -505,9 +584,15 @@ export async function createOwnTrip(driverId: string, raw: unknown) {
   const dates = repeat
     ? Array.from({ length: repeat.occurrences }, (_, occurrence) => new Date(new Date(departures[0]).getTime() + occurrence * repeat.everyHours * 3600000))
     : departures.map((value) => new Date(value));
+  const arrivalOf = (departure: Date) => (t.arrival && dates.length === 1 ? new Date(t.arrival) : new Date(departure.getTime() + route.durationMinutes * 60000));
+  if (new Set(dates.map((date) => date.getTime())).size !== dates.length) throw new ApiError(400, 'The same departure was chosen twice.');
+  if (dates.some((date) => date <= new Date())) throw new ApiError(400, 'Schedule a future departure.');
+  const slots = dates.map((departure) => ({ departure, arrival: arrivalOf(departure), vehicleId: t.vehicleId }));
+  if (slots.some((slot) => slot.arrival <= slot.departure)) throw new ApiError(400, 'Arrival must follow departure.');
+  assertLicensed(d.licenseExpiry, slots);
+  await assertSlotsFree(driverId, slots);
   const createAt = async (departure: Date) => {
-    const arrival = t.arrival && dates.length === 1 ? new Date(t.arrival) : new Date(departure.getTime() + route.durationMinutes * 60000);
-    if (arrival <= departure) throw new ApiError(400, 'Arrival must follow departure.');
+    const arrival = arrivalOf(departure);
     const opens = t.bookingOpensAt && dates.length === 1 ? new Date(t.bookingOpensAt) : new Date();
     const closes = t.bookingClosesAt && dates.length === 1 ? new Date(t.bookingClosesAt) : departure;
     if (opens >= closes || closes > departure) throw new ApiError(400, 'Booking must open before it closes, and close no later than departure.');
@@ -529,7 +614,12 @@ export async function createOwnTrip(driverId: string, raw: unknown) {
     }, driverId, false, d.operatorId);
   };
   const items = [];
-  for (const departure of dates) items.push(await createAt(departure));
+  try {
+    for (const departure of dates) items.push(await createAt(departure));
+  } catch (error) {
+    await discardPublished(driverId, d.operatorId, items.map((item) => item.id), []);
+    throw error;
+  }
   return items.length > 1 ? { ...items[0], published: { created: items.length }, items } : items[0];
 }
 
@@ -541,9 +631,20 @@ export async function cancelOwnTrip(driverId: string, tripId: string, raw: unkno
     select: { id: true },
   });
   if (!trip) throw new ApiError(404, 'Trip not found.');
-  const active = await db.booking.count({ where: { tripId, status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } } });
-  if (active) throw new ApiError(409, 'This trip has bookings. Ask the admin to cancel it so passengers can be refunded.');
+  const active = await db.booking.count({ where: { tripId, status: { in: [...CANCELLABLE] } } });
+  if (active) throw new ApiError(409, 'This trip has bookings. Cancel them first, or ask the admin to cancel the trip so passengers can be refunded.');
   return cancelTrip(tripId, driverId, raw, d.operatorId, false);
+}
+
+/** A driver cancels a booking on their own trip; any money owed becomes a refund record the admin settles. */
+export async function cancelOwnBooking(driverId: string, bookingId: string, raw: unknown) {
+  const d = await me(driverId);
+  const booking = await db.booking.findFirst({
+    where: { id: bookingId, operatorId: d.operatorId, trip: { assignments: { some: { driverId, endedAt: null } } } },
+    select: { id: true },
+  });
+  if (!booking) throw new ApiError(404, 'Booking not found.');
+  return cancelBooking(booking.id, driverId, raw, d.operatorId);
 }
 
 /** Booking operations are deliberately limited to trips currently assigned to this driver. */
@@ -581,7 +682,8 @@ export async function ownBookings(driverId: string, raw: unknown) {
       trip: { select: { id: true, departure: true, status: true, vehicle: { select: { name: true, registration: true } }, route: { select: { origin: true, destination: true } } } },
       seats: { where: { active: true }, select: { tripSeat: { select: { vehicleSeat: { select: { label: true } } } } } },
       passengers: { select: { name: true, seatLabel: true, boardingPoint: true, destination: true } },
-      payment: { select: { id: true, status: true, claimedAmount: true, transactionRef: true, note: true, proofs: { select: { id: true, imageKey: true, remarks: true, createdAt: true } } } },
+      cancellation: { select: { reason: true, refundStatus: true } },
+      payment: { select: { id: true, status: true, claimedAmount: true, transactionRef: true, duplicateReference: true, note: true, proofs: { select: { id: true, imageKey: true, remarks: true, createdAt: true } } } },
     },
   });
 }
@@ -640,28 +742,95 @@ const tripControl = z.object({
 export async function updateOwnTrip(driverId: string, tripId: string, raw: unknown) {
   const input = tripControl.parse(raw);
   const assignment = await ownAssignment(driverId, tripId);
-  if (assignment.trip.status === 'CANCELLED') throw new ApiError(409, 'A cancelled trip cannot be changed.');
-  if (input.status && !tripTransitionAllowed(assignment.trip.status, input.status))
-    throw new ApiError(409, `A trip cannot move from ${assignment.trip.status.toLowerCase()} to ${input.status.toLowerCase()}.`);
-  if (input.bookingOpen && (assignment.trip.departure <= new Date() || input.status === 'DEPARTED' || input.status === 'COMPLETED'))
-    throw new ApiError(409, 'Booking can only be opened before departure.');
-  const rescheduling = input.departure !== undefined || input.arrival !== undefined;
-  if (rescheduling) {
-    if (assignment.trip.status !== 'SCHEDULED') throw new ApiError(409, 'Only scheduled trips can be rescheduled.');
-    const activeBookings = await db.booking.count({ where: { tripId, status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } } });
-    if (activeBookings) throw new ApiError(409, 'Create a replacement trip for passengers who already hold or confirmed seats.');
-    const departure = input.departure ? new Date(input.departure) : assignment.trip.departure;
-    const arrival = input.arrival ? new Date(input.arrival) : null;
-    if (departure <= new Date() || (arrival && arrival <= departure)) throw new ApiError(400, 'Use a future departure and an arrival after departure.');
-  }
   return serial(async (tx) => {
-    const data = { ...input, ...(input.departure ? { departure: new Date(input.departure) } : {}), ...(input.arrival ? { arrival: new Date(input.arrival) } : {}), ...(input.bookingOpensAt !== undefined ? { bookingOpensAt: input.bookingOpensAt ? new Date(input.bookingOpensAt) : null } : {}), ...(input.bookingClosesAt !== undefined ? { bookingClosesAt: input.bookingClosesAt ? new Date(input.bookingClosesAt) : null } : {}) };
-    const updated = await tx.trip.update({ where: { id: tripId }, data });
-    if (rescheduling) await tx.tripDriverAssignment.updateMany({ where: { tripId, endedAt: null }, data: { startsAt: updated.departure, endsAt: updated.arrival } });
+    const trip = await tx.trip.findUniqueOrThrow({ where: { id: tripId } });
+    if (trip.status === 'CANCELLED') throw new ApiError(409, 'A cancelled trip cannot be changed.');
+    if (input.status && !tripTransitionAllowed(trip.status, input.status))
+      throw new ApiError(409, `A trip cannot move from ${trip.status.toLowerCase()} to ${input.status.toLowerCase()}.`);
+    if (input.bookingOpen && (trip.status !== 'SCHEDULED' || trip.departure <= new Date() || (input.status && input.status !== 'SCHEDULED')))
+      throw new ApiError(409, 'Booking can only be opened before departure.');
+
+    // Forms resend the current times with every edit; only a real change counts as rescheduling.
+    const departure = input.departure ? new Date(input.departure) : trip.departure;
+    const moved = departure.getTime() !== trip.departure.getTime();
+    const arrival = input.arrival ? new Date(input.arrival) : new Date(trip.arrival.getTime() + departure.getTime() - trip.departure.getTime());
+    if (moved || arrival.getTime() !== trip.arrival.getTime()) {
+      if (trip.status !== 'SCHEDULED') throw new ApiError(409, 'Only scheduled trips can be rescheduled.');
+      if (await tx.booking.count({ where: { tripId, status: { in: [...CANCELLABLE] } } }))
+        throw new ApiError(409, 'Create a replacement trip for passengers who already hold or confirmed seats.');
+      if (departure <= new Date() || arrival <= departure) throw new ApiError(400, 'Use a future departure and an arrival after departure.');
+    }
+
+    const bookingOpensAt = input.bookingOpensAt === undefined ? trip.bookingOpensAt : input.bookingOpensAt && new Date(input.bookingOpensAt);
+    // A window that ended at the old departure follows the trip to its new one.
+    const followsDeparture = trip.bookingClosesAt?.getTime() === trip.departure.getTime();
+    const bookingClosesAt = input.bookingClosesAt !== undefined ? input.bookingClosesAt && new Date(input.bookingClosesAt) : moved && (followsDeparture || (trip.bookingClosesAt && trip.bookingClosesAt > departure)) ? departure : trip.bookingClosesAt;
+    if (bookingClosesAt && bookingClosesAt > departure) throw new ApiError(400, 'Booking must close no later than departure.');
+    if (bookingOpensAt && bookingClosesAt && bookingOpensAt >= bookingClosesAt) throw new ApiError(400, 'Booking must open before it closes.');
+
+    const updated = await tx.trip.update({
+      where: { id: tripId },
+      data: {
+        ...(input.bookingOpen !== undefined ? { bookingOpen: input.bookingOpen } : {}),
+        ...(input.status ? { status: input.status } : {}),
+        departure,
+        arrival,
+        bookingOpensAt,
+        bookingClosesAt,
+      },
+    });
+    if (moved || arrival.getTime() !== trip.arrival.getTime())
+      await tx.tripDriverAssignment.updateMany({ where: { tripId, endedAt: null }, data: { startsAt: departure, endsAt: arrival } });
     await tx.auditLog.create({
       data: { actorId: driverId, operatorId: assignment.trip.operatorId, action: 'DRIVER_UPDATED_TRIP_OPERATIONS', targetId: tripId, details: input },
     });
     return updated;
+  });
+}
+
+const seatBlock = z.object({ blocked: z.boolean(), note: z.string().trim().min(3).max(1000) });
+
+/** Takes a seat out of sale for one departure (a broken seat, a seat kept for a helper). Sold seats stay sold. */
+export async function setOwnSeatBlocked(driverId: string, tripSeatId: string, raw: unknown) {
+  const input = seatBlock.parse(raw);
+  const seat = await db.tripSeat.findUnique({ where: { id: tripSeatId }, select: { tripId: true } });
+  if (!seat) throw new ApiError(404, 'Seat not found.');
+  const assignment = await ownAssignment(driverId, seat.tripId);
+  return serial(async (tx) => {
+    await expire(tx, seat.tripId);
+    const current = await tx.tripSeat.findUniqueOrThrow({ where: { id: tripSeatId }, include: { bookings: { where: { active: true }, select: { id: true } } } });
+    if (input.blocked && current.bookings.length) throw new ApiError(409, 'A reserved seat cannot be blocked.');
+    const updated = await tx.tripSeat.update({ where: { id: tripSeatId }, data: { blocked: input.blocked } });
+    await tx.auditLog.create({
+      data: { actorId: driverId, operatorId: assignment.trip.operatorId, action: input.blocked ? 'BLOCK_SEAT' : 'UNBLOCK_SEAT', targetId: seat.tripId, details: { seatId: tripSeatId, note: input.note } },
+    });
+    return { id: updated.id, blocked: updated.blocked };
+  });
+}
+
+/** Trips of the assigned driver: the Nepal-calendar window, plus any trip still on the road whatever its date. */
+export async function ownTrips(driverId: string, tripId: string | undefined, daysRaw: unknown) {
+  const days = z.coerce.number().int().refine((v) => [1, 7, 30, 90].includes(v), 'Choose 1, 7, 30, or 90 days.').parse(daysRaw);
+  const start = nepalDayStart();
+  const trips = await db.trip.findMany({
+    where: {
+      id: tripId,
+      assignments: { some: { driverId, endedAt: null } },
+      ...(tripId ? {} : { OR: [{ departure: { gte: start, lt: new Date(start.getTime() + days * DAY_MS) } }, { status: { in: ['BOARDING', 'DEPARTED'] } }] }),
+    },
+    include: {
+      vehicle: true,
+      route: { include: { origin: true, destination: true } },
+      seats: { select: { id: true } },
+      bookings: { where: { status: 'CONFIRMED' }, select: { id: true, seats: { where: { active: true }, select: { tripSeatId: true } } } },
+    },
+    orderBy: { departure: 'asc' },
+    take: 200,
+  });
+  return trips.map((t) => {
+    // A seat resold on a later leg carries two passengers but is still one seat.
+    const taken = new Set(t.bookings.flatMap((b) => b.seats.map((seat) => seat.tripSeatId)));
+    return { ...t, confirmedPassengers: t.bookings.reduce((n, b) => n + b.seats.length, 0), remainingSeats: t.seats.length - taken.size };
   });
 }
 
@@ -690,19 +859,22 @@ export async function ownTripAvailability(driverId: string, tripId: string) {
 /** Small, indexed operational summary for today, the next week, or the next month. */
 export async function driverDashboard(driverId: string, daysRaw: unknown) {
   const days = z.coerce.number().int().refine((v) => [1, 7, 30].includes(v), 'Choose 1, 7, or 30 days.').parse(daysRaw);
-  const start = new Date(), end = new Date(start.getTime() + days * 86400000);
+  // "Today" is the Nepal calendar day, so a morning trip still counts in the afternoon.
+  const start = nepalDayStart(), end = new Date(start.getTime() + days * DAY_MS);
   const trips = await db.trip.findMany({
-    where: { assignments: { some: { driverId, endedAt: null } }, departure: { gte: start, lt: end } },
-    include: { seats: { select: { id: true } }, bookings: { where: { status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } }, include: { seats: { where: { active: true }, select: { id: true } }, payment: { select: { status: true, verifiedAmount: true } } } } },
+    where: { assignments: { some: { driverId, endedAt: null } }, departure: { gte: start, lt: end }, status: { not: 'CANCELLED' } },
+    include: { seats: { select: { id: true } }, bookings: { where: { status: { in: ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED'] } }, include: { seats: { where: { active: true }, select: { tripSeatId: true } }, payment: { select: { status: true, verifiedAmount: true } } } } },
   });
   const bookings = trips.flatMap((trip) => trip.bookings);
+  // A seat sold on two legs of one trip is one occupied seat.
+  const occupied = trips.reduce((n, trip) => n + new Set(trip.bookings.flatMap((b) => b.seats.map((seat) => seat.tripSeatId))).size, 0);
   return {
     days,
     trips: trips.length,
     upcoming: trips.filter((trip) => trip.departure > new Date() && trip.status === 'SCHEDULED').length,
     bookings: bookings.length,
-    occupiedSeats: bookings.reduce((n, booking) => n + booking.seats.length, 0),
-    availableSeats: trips.reduce((n, trip) => n + trip.seats.length, 0) - bookings.reduce((n, booking) => n + booking.seats.length, 0),
+    occupiedSeats: occupied,
+    availableSeats: trips.reduce((n, trip) => n + trip.seats.length, 0) - occupied,
     pendingPayments: bookings.filter((booking) => booking.payment?.status === 'SUBMITTED' || booking.payment?.status === 'UNDER_REVIEW').length,
     revenue: bookings.reduce((n, booking) => n + (booking.payment?.status === 'VERIFIED' ? booking.payment.verifiedAmount ?? 0 : 0), 0),
   };
@@ -712,8 +884,8 @@ const offlineBookingInput = z.object({
   tripId: z.string().min(1),
   seats: z.array(z.string().min(1)).min(1).max(8),
   name: text,
-  phone,
-  email: z.string().trim().email().max(254).optional(),
+  phone: phone.transform(normalizePhone),
+  email: z.string().trim().toLowerCase().email().max(254).optional(),
   fromLocationId: z.string().min(1),
   toLocationId: z.string().min(1),
   boardingPointId: z.string().min(1).optional(),
@@ -748,6 +920,7 @@ export async function createOfflineBooking(driverId: string, raw: unknown) {
     await tx.auditLog.create({
       data: { actorId: driverId, operatorId: b.operatorId, action: 'DRIVER_OFFLINE_BOOKING_CONFIRMED', targetId: b.id, details: { method: input.method, amount, note: input.note } },
     });
+    await queueTicketEmail(tx, b.id);
     return { id: confirmed.id, reference: confirmed.reference, status: confirmed.status };
   });
 }

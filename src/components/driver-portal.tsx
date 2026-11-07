@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
-import { api, Badge, Empty, ErrorBox, Skeleton, onForm } from './common';
+import { api, Badge, Empty, ErrorBox, Skeleton, onForm, useAsk } from './common';
 import { SeatGridEditor } from './layouts';
 import { Button } from './ui/button';
 import { PasswordInput } from './ui/password-input';
@@ -392,10 +392,16 @@ export function DriverVehicles() {
     setForm(null);
     await client.invalidateQueries({ queryKey: ['driver-fleet'] });
   };
+  const [problem, setProblem] = useState<unknown>(null);
   const removeVehicle = async (id: string) => {
     if (!window.confirm('Delete this unused vehicle? Vehicles used by trips are kept as history.')) return;
-    await api('/api/driver/resources/vehicles/' + id, { method: 'DELETE' });
-    await client.invalidateQueries({ queryKey: ['driver-fleet'] });
+    setProblem(null);
+    try {
+      await api('/api/driver/resources/vehicles/' + id, { method: 'DELETE' });
+      await client.invalidateQueries({ queryKey: ['driver-fleet'] });
+    } catch (e) {
+      setProblem(e);
+    }
   };
   if (q.isLoading) return <Skeleton />;
   if (!q.data) return <ErrorBox error={q.error} />;
@@ -413,6 +419,7 @@ export function DriverVehicles() {
         )}
       </div>
       <ApprovalNote />
+      <ErrorBox error={problem} />
       {form && <VehicleForm key={form.vehicle?.id ?? 'new'} fleet={q.data} vehicle={form.vehicle} onDone={done} />}
       <div className="trip-grid">
         {q.data.vehicles.map((v) => (
@@ -450,7 +457,22 @@ export function DriverVehicles() {
 }
 
 function RouteForm({ fleet, route, onDone }: { fleet: Fleet; route?: RouteRow; onDone: () => void }) {
-  const [type, setType] = useState(fleet.vehicles[0]?.type ?? fleet.vehicleTypes[0]),
+  const firstType = fleet.vehicles[0]?.type ?? fleet.vehicleTypes[0];
+  /** Saved leg prices of one vehicle type, keyed the way the form shows them. */
+  const savedLegs = (vehicleType: string): Record<string, string> => {
+    if (!route) return {};
+    const names = new Map([
+      [route.originId, route.origin.name],
+      [route.destinationId, route.destination.name],
+      ...route.stops.map((s) => [s.locationId, s.location.name] as [string, string]),
+    ]);
+    return Object.fromEntries(
+      route.segmentFares
+        .filter((f) => f.vehicleType === vehicleType)
+        .map((f) => [`${names.get(f.fromLocationId)}>${names.get(f.toLocationId)}`, String(f.amount)]),
+    );
+  };
+  const [type, setType] = useState(firstType),
     [origin, setOrigin] = useState(route?.origin.name ?? ''),
     [destination, setDestination] = useState(route?.destination.name ?? ''),
     [stops, setStops] = useState<StopRow[]>(
@@ -462,19 +484,7 @@ function RouteForm({ fleet, route, onDone }: { fleet: Fleet; route?: RouteRow; o
         allowDropoff: s.allowDropoff,
       })) ?? [],
     ),
-    [legs, setLegs] = useState<Record<string, string>>(() => {
-      if (!route) return {};
-      const names = new Map([
-        [route.originId, route.origin.name],
-        [route.destinationId, route.destination.name],
-        ...route.stops.map((s) => [s.locationId, s.location.name] as [string, string]),
-      ]);
-      return Object.fromEntries(
-        route.segmentFares
-          .filter((f) => f.vehicleType === (fleet.vehicles[0]?.type ?? fleet.vehicleTypes[0]))
-          .map((f) => [`${names.get(f.fromLocationId)}>${names.get(f.toLocationId)}`, String(f.amount)]),
-      );
-    }),
+    [legs, setLegs] = useState<Record<string, string>>(() => savedLegs(firstType)),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false);
   const patch = (i: number, change: Partial<StopRow>) => setStops((old) => old.map((s, n) => (n === i ? { ...s, ...change } : s)));
@@ -599,7 +609,13 @@ function RouteForm({ fleet, route, onDone }: { fleet: Fleet; route?: RouteRow; o
           <p className="muted">Leave a price empty to work it out from the distance.</p>
           <label>
             These prices apply to
-            <select value={type} onChange={(e) => setType(e.target.value)}>
+            <select
+              value={type}
+              onChange={(e) => {
+                setType(e.target.value);
+                setLegs(savedLegs(e.target.value));
+              }}
+            >
               {fleet.vehicleTypes.map((t) => (
                 <option key={t}>{t}</option>
               ))}
@@ -639,10 +655,16 @@ export function DriverRoutes() {
     setForm(null);
     await client.invalidateQueries({ queryKey: ['driver-fleet'] });
   };
+  const [problem, setProblem] = useState<unknown>(null);
   const removeRoute = async (id: string) => {
     if (!window.confirm('Delete this unused route? Routes used by trips are kept as history.')) return;
-    await api('/api/driver/resources/routes/' + id, { method: 'DELETE' });
-    await client.invalidateQueries({ queryKey: ['driver-fleet'] });
+    setProblem(null);
+    try {
+      await api('/api/driver/resources/routes/' + id, { method: 'DELETE' });
+      await client.invalidateQueries({ queryKey: ['driver-fleet'] });
+    } catch (e) {
+      setProblem(e);
+    }
   };
   if (q.isLoading) return <Skeleton />;
   if (!q.data) return <ErrorBox error={q.error} />;
@@ -660,6 +682,7 @@ export function DriverRoutes() {
         )}
       </div>
       <ApprovalNote />
+      <ErrorBox error={problem} />
       {form && <RouteForm key={form.route?.id ?? 'new'} fleet={q.data} route={form.route} onDone={done} />}
       <div className="trip-grid">
         {q.data.routes.map((r) => (
@@ -796,10 +819,16 @@ export function DriverPayment() {
     setForm(null);
     await client.invalidateQueries({ queryKey: ['driver-fleet'] });
   };
+  const [problem, setProblem] = useState<unknown>(null);
   const removeQr = async (id: string) => {
     if (!window.confirm('Delete this unused payment account? Accounts attached to past trips are kept as history.')) return;
-    await api('/api/driver/resources/payment-qr/' + id, { method: 'DELETE' });
-    await client.invalidateQueries({ queryKey: ['driver-fleet'] });
+    setProblem(null);
+    try {
+      await api('/api/driver/resources/payment-qr/' + id, { method: 'DELETE' });
+      await client.invalidateQueries({ queryKey: ['driver-fleet'] });
+    } catch (e) {
+      setProblem(e);
+    }
   };
   if (q.isLoading) return <Skeleton />;
   if (!q.data) return <ErrorBox error={q.error} />;
@@ -817,6 +846,7 @@ export function DriverPayment() {
         )}
       </div>
       <p className="notice">Choose a default QR for new trips, or select a different active QR on a specific trip. Existing payment records keep their original QR snapshot.</p>
+      <ErrorBox error={problem} />
       {form && <PaymentForm key={form.qr?.id ?? 'new'} qr={form.qr} onDone={done} />}
       <div className="trip-grid">
         {q.data.qrs.map((r) => (
@@ -890,7 +920,8 @@ const clockLabel = (hour: number) => {
 export function DriverSchedule() {
   const client = useQueryClient();
   const q = useFleet();
-  const trips = useQuery({ queryKey: ['driver-trips'], queryFn: () => api<{ items: OwnTrip[] }>('/api/driver/trips') });
+  const trips = useQuery({ queryKey: ['driver-trips'], queryFn: () => api<{ items: OwnTrip[] }>('/api/driver/trips?days=90') });
+  const { ask, dialog } = useAsk();
   const schedules = useQuery({ queryKey: ['driver-schedules'], queryFn: () => api<{ items: PublishedSchedule[] }>('/api/driver/schedules') });
   const [routeId, setRouteId] = useState(''),
     [departureTimes, setDepartureTimes] = useState(['']),
@@ -924,8 +955,15 @@ export function DriverSchedule() {
   const missing = [!vehicles.length && 'a vehicle', !routes.length && 'a route', !qrs.length && 'a payment account'].filter(Boolean);
   const upcoming = trips.data?.items.filter((t) => t.status === 'SCHEDULED' && new Date(t.departure) > new Date()) ?? [];
   async function cancel(t: OwnTrip) {
-    const reason = window.prompt('Why are you cancelling this trip?');
-    if (!reason || reason.trim().length < 3) return;
+    const answer = await ask({
+      title: 'Cancel this trip',
+      description: 'A trip with bookings must have them cancelled first, so passengers are told and refunded.',
+      confirm: 'Cancel trip',
+      destructive: true,
+      fields: [{ name: 'reason', label: 'Why are you cancelling this trip?', type: 'textarea', required: true, minLength: 3, maxLength: 500 }],
+    });
+    if (!answer) return;
+    const reason = answer.reason;
     setError(null);
     setNotice('');
     try {
@@ -956,8 +994,14 @@ export function DriverSchedule() {
     await Promise.all([client.invalidateQueries({ queryKey: ['driver-schedules'] }), client.invalidateQueries({ queryKey: ['driver-trips'] })]);
   };
   const controlSchedule = async (id: string, action: 'pause' | 'resume' | 'cancel' | 'extend') => {
-    const nextEnd = action === 'extend' ? window.prompt('New end date (YYYY-MM-DD):', endsOn) : null;
-    if (action === 'extend' && !nextEnd) return;
+    const answer =
+      action === 'extend'
+        ? await ask({ title: 'Extend this schedule', description: 'A trip is added for every new day. Existing trips do not change.', confirm: 'Extend schedule', fields: [{ name: 'endsOn', label: 'New end date', type: 'date', required: true, min: nepalDate(1), defaultValue: endsOn }] })
+        : action === 'cancel'
+          ? await ask({ title: 'Cancel future trips', description: 'Every future trip of this schedule is cancelled. This is refused while any of them has a booking.', confirm: 'Cancel future trips', destructive: true, fields: [] })
+          : {};
+    if (!answer) return;
+    const nextEnd = answer.endsOn;
     setBusy(true); setError(null); setNotice('');
     try {
       await api('/api/driver/schedules/' + id, { method: 'PATCH', body: JSON.stringify(action === 'extend' ? { action, endsOn: nextEnd } : { action }) });
@@ -967,6 +1011,7 @@ export function DriverSchedule() {
   };
   return (
     <>
+      {dialog}
       <p className="eyebrow">DEPARTURES</p>
       <h1>Publish route</h1>
       {notice && <p className="notice success" role="status">{notice}</p>}
@@ -976,7 +1021,7 @@ export function DriverSchedule() {
           <Button type="button" role="tab" aria-selected={publishMode === 'single'} variant={publishMode === 'single' ? 'default' : 'outline'} onClick={() => setPublishMode('single')}>Single trip</Button>
           <Button type="button" role="tab" aria-selected={publishMode === 'double'} variant={publishMode === 'double' ? 'default' : 'outline'} onClick={chooseDoubleTrip}>Double trip</Button>
         </div>
-        <p className="muted">{publishMode === 'single' ? 'Publish one or more individual departures.' : 'Publish multiple route schedules across consecutive days, such as an outbound and return trip.'}</p>
+        <p className="muted">{publishMode === 'single' ? 'Publish one or more individual departures.' : 'Publish outbound and return routes across a range of dates. Each is its own schedule, and each date becomes its own bookable trip.'}</p>
       </section>
       {missing.length > 0 ? (
         <p className="notice">Before you can publish a route, you need an active {missing.join(', ')}.</p>
@@ -984,7 +1029,7 @@ export function DriverSchedule() {
         <>
         {publishMode === 'double' && <>
         <section className="card stack">
-          <div className="spread"><div><h2>Long-term trip publishing</h2><p className="muted">Publish one or more existing routes across consecutive dates. Each date becomes its own bookable trip.</p></div><Badge status="DRAFT" /></div>
+          <div className="spread"><div><h2>Long-term trip publishing</h2><p className="muted">Publish one or more existing routes across consecutive dates. Each date becomes its own bookable trip.</p></div></div>
           <div className="grid-2">
             <label>
               Morning departure: <strong>{clockLabel(amHour)}</strong>
@@ -1033,6 +1078,7 @@ export function DriverSchedule() {
             setError(null);
             setNotice('');
             try {
+              const published = departureTimes.filter(Boolean).length;
               await api('/api/driver/trips', {
                 method: 'POST',
                 body: JSON.stringify({
@@ -1047,7 +1093,7 @@ export function DriverSchedule() {
               form.reset();
               setRouteId('');
               setDepartureTimes(['']);
-              setNotice('The selected departures are published and open for booking.');
+              setNotice(published === 1 ? 'The departure is published and open for booking.' : published + ' departures are published and open for booking.');
               await client.invalidateQueries({ queryKey: ['driver-trips'] });
             } catch (e) {
               setError(e);
@@ -1110,7 +1156,7 @@ export function DriverSchedule() {
           </div>
           {route && (
             <p className="muted">
-              Price per seat: {money(route.baseFare)}, from your approved route. Travel time: {travelHours(route.durationMinutes)}.
+              Price per seat: {money(route.baseFare)}, from your route. Travel time: {travelHours(route.durationMinutes)}.
             </p>
           )}
           <Button disabled={busy}>{busy ? 'Publishing…' : 'Publish selected departures'}</Button>

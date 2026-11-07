@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Search, ShieldCheck } from 'lucide-react';
 import { api, Badge, ErrorBox, Skeleton, Sheet, adminApi, onForm } from './common';
 import { Button } from './ui/button';
 import { money } from '@/lib/utils';
@@ -60,15 +60,18 @@ function Audit({ target }: { target: string }) {
 export function Payments() {
   const [page, setPage] = useState(1),
     [search, setSearch] = useState(''),
+    [status, setStatus] = useState('SUBMITTED'),
     [selected, setSelected] = useState<Payment | null>(null),
     [action, setAction] = useState<'verify' | 'reject' | 'clarify' | 'reconcile'>('verify'),
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
   const client = useQueryClient();
   const q = useQuery({
-    queryKey: ['payments', page],
+    queryKey: ['payments', page, status, search],
     queryFn: () =>
-      api<{ items: Payment[]; nextPage: number | null }>(adminApi('payments?page=') + page),
+      api<{ items: Payment[]; nextPage: number | null }>(
+        adminApi('payments?') + new URLSearchParams({ page: String(page), ...(status ? { status } : {}), ...(search ? { q: search } : {}) }),
+      ),
     refetchInterval: 15000,
   });
   async function decide(form: FormData) {
@@ -113,24 +116,41 @@ export function Payments() {
       <p className="muted">
         A screenshot is a claim of payment. Check the actual transaction before verifying.
       </p>
-      <label>
-        Search this page
-        <input
-          placeholder="Booking reference, passenger, or transaction reference"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </label>
+      <form
+        className="toolbar"
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setPage(1);
+          setSearch(String(new FormData(e.currentTarget).get('q') || '').trim());
+        }}
+      >
+        <label className="toolbar-search">
+          <Search size={16} aria-hidden="true" />
+          <input name="q" key={search} defaultValue={search} placeholder="Booking reference, passenger, phone or transaction" aria-label="Search payments" />
+        </label>
+        <select
+          aria-label="Filter by payment status"
+          value={status}
+          onChange={(e) => {
+            setPage(1);
+            setStatus(e.target.value);
+          }}
+        >
+          <option value="">All payments</option>
+          <option value="SUBMITTED">Waiting for review</option>
+          <option value="UNDER_REVIEW">Clarification asked</option>
+          <option value="VERIFIED">Verified</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="UNPAID">Not paid yet</option>
+        </select>
+        <Button variant="outline">Search</Button>
+      </form>
       <ErrorBox error={q.error} />
       {q.isLoading ? (
         <Skeleton />
       ) : (
         q.data?.items
-          .filter((p) =>
-            (p.booking.reference + p.booking.customer.name + (p.transactionRef || ''))
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          )
           .map((p) => (
             <article className="payment-review" key={p.id}>
               <div className="spread">
@@ -222,7 +242,9 @@ export function Payments() {
                 </div>
               </div>
               <div className="row">
-                {p.proofs.length > 0 && p.status !== 'VERIFIED' && (
+                {p.proofs.length > 0 &&
+                  ['SUBMITTED', 'UNDER_REVIEW'].includes(p.status) &&
+                  ['PAYMENT_REVIEW', 'PAYMENT_RECONCILIATION_REQUIRED'].includes(p.booking.status) && (
                   <>
                     <Button
                       onClick={() => {
@@ -275,7 +297,9 @@ export function Payments() {
             </article>
           ))
       )}
-      {!q.isLoading && !q.data?.items.length && <div className="card">No payment records yet.</div>}
+      {!q.isLoading && !q.data?.items.length && (
+        <div className="card">{search || status ? 'No payments match this view.' : 'No payment records yet.'}</div>
+      )}
       <div className="pagination">
         <Button variant="outline" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
           Previous

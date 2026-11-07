@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { classifyError } from '../src/lib/api-error';
+import { classifyError, describeError } from '../src/lib/api-error';
 import { ApiError } from '../src/lib/errors';
 
 const known = (code: string) => new Prisma.PrismaClientKnownRequestError('x', { code, clientVersion: 't' });
@@ -38,4 +38,14 @@ test('errors map to accurate, specific statuses', () => {
   assert.equal(status(z.string().safeParse(1).error), 400);
   assert.ok(classifyError(known('P1001')).retryAfter);
   assert.equal(classifyError(new ApiError(404, 'nope')).message, 'nope');
+});
+
+test('Prisma diagnostics contain only a code and optional model name', () => {
+  const error = new Prisma.PrismaClientKnownRequestError('sensitive database details', {
+    code: 'P2021',
+    clientVersion: 't',
+    meta: { modelName: 'Location' },
+  });
+  assert.equal(describeError(error), 'PrismaClientKnownRequestError:P2021:model=Location');
+  assert.doesNotMatch(describeError(error), /sensitive|details/i);
 });

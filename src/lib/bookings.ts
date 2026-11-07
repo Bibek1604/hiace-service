@@ -22,6 +22,11 @@ export async function serial<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>
         }
         throw new ApiError(409, 'Concurrent change. Please retry.');
       }
+      // Exclusion constraints and CHECKs reach Prisma only as raw errors that name the constraint.
+      if (e instanceof Error && /vehicle_schedule_conflict|driver_schedule_conflict/.test(e.message))
+        throw new ApiError(409, 'This vehicle or driver already has an overlapping trip.');
+      if (e instanceof Error && e.message.includes('trip_booking_window_order'))
+        throw new ApiError(400, 'Booking must open before it closes.');
       // P2002 is a unique violation; the segment exclusion constraint surfaces only by name in the message.
       if (
         (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') ||
@@ -130,6 +135,7 @@ export async function reserve(input: ReserveInput) {
       !trip.bookingOpen ||
       trip.status !== 'SCHEDULED' ||
       !trip.vehicle.active ||
+      !trip.route.active ||
       !trip.paymentQR.active ||
       !trip.assignments.some((assignment) => assignment.driver.active && assignment.driver.status === 'ACTIVE') ||
       trip.departure <= new Date() ||
@@ -312,6 +318,9 @@ export async function review(
     const b = p.booking;
     if (b.status === 'CANCELLED')
       throw new ApiError(409, 'This booking was cancelled. Settle the payment through its refund record instead.');
+    // A rejected booking has released its seats, which may already be resold; a decision is final.
+    if (p.status === 'REJECTED' || !['PAYMENT_REVIEW', 'PAYMENT_RECONCILIATION_REQUIRED'].includes(b.status))
+      throw new ApiError(409, 'This payment was already decided. Ask the passenger to make a new booking.');
     if (
       input.action === 'verify' &&
       (!Number.isSafeInteger(input.verifiedAmount) || input.verifiedAmount! < b.amount)

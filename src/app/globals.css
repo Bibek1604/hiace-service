@@ -663,6 +663,34 @@ input[type='checkbox'] {
   grid-template-columns: 1fr 1fr 22px 1fr 1fr;
   gap: 12px 8px;
 }
+.seat-deck + .seat-deck {
+  margin-top: 22px;
+}
+.seat-deck h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.stop-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.stop-line li {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  border: 1px solid var(--line, #dfe7ee);
+  border-radius: 10px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+.stop-line li.on-journey {
+  border-color: #2563eb;
+  opacity: 1;
+}
 .seat {
   min-width: 0;
   min-height: 46px;

@@ -23,7 +23,7 @@ export function checkEnv(env: Env = process.env): EnvReport {
   const vercel = !!(env.VERCEL || env.VERCEL_ENV);
   if (databaseUrl && vercel && ['localhost', '127.0.0.1', '::1'].includes(databaseUrl.hostname))
     errors.push('DATABASE_URL points to a loopback host. Vercel cannot reach a database on your local machine.');
-  if (databaseUrl && vercel && databaseUrl.port === '6543') {
+  if (databaseUrl && databaseUrl.port === '6543') {
     if (databaseUrl.searchParams.get('pgbouncer') !== 'true')
       warnings.push('DATABASE_URL uses a transaction pooler but is missing pgbouncer=true for Prisma.');
     if (!databaseUrl.searchParams.has('connection_limit'))

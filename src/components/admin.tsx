@@ -9,6 +9,7 @@ import { Button } from './ui/button';
 import { PasswordInput } from './ui/password-input';
 import { fields } from '@/lib/form-fields';
 import { money, travelHours } from '@/lib/utils';
+import { NEPAL_MOBILE_PATTERN } from '@/lib/phone';
 import type { TripView } from '@/lib/types';
 type Row = Record<string, unknown> & { id: string };
 type Choice = {
@@ -51,6 +52,7 @@ const METRICS: [string, string][] = [
   ['reconciliation', 'Reconciliation cases'],
   ['openRefunds', 'Open refunds'],
   ['revenue', 'Verified revenue'],
+  ['refunded', 'Refunds paid'],
 ];
 export function AdminDashboard({ reports = false }: { reports?: boolean }) {
   const [days, setDays] = useState(1);
@@ -81,7 +83,7 @@ export function AdminDashboard({ reports = false }: { reports?: boolean }) {
           </Button>
         )}
       </div>
-      <p className="muted">Live figures from your records. They refresh every 15 seconds and after every change you make.</p>
+      <p className="muted">Live figures from your records. Periods are Nepal calendar days ending today; work still waiting (scheduled trips, payments, refunds) is always counted in full.</p>
       <div className="row">{[1, 7, 30].map(value => <Button key={value} variant={days === value ? 'default' : 'outline'} onClick={() => setDays(value)}>{value === 1 ? 'Today' : value + ' days'}</Button>)}</div>
       <ErrorBox error={q.error} />
       {q.isLoading ? (
@@ -91,7 +93,7 @@ export function AdminDashboard({ reports = false }: { reports?: boolean }) {
           {METRICS.map(([k, label]) => (
             <div className="stat" key={k}>
               <span>{label}</span>
-              <strong>{k === 'revenue' ? money(q.data[k] ?? 0) : (q.data[k] ?? 0)}</strong>
+              <strong>{k === 'revenue' || k === 'refunded' ? money(q.data[k] ?? 0) : (q.data[k] ?? 0)}</strong>
             </div>
           ))}
         </div>
@@ -227,7 +229,8 @@ export function ResourceForm({
           value = new Date(String(value) + ':00+05:45').toISOString();
         if (f.type === 'number') value = Number(value);
         if (resource === 'routes' && f.key === 'durationMinutes') value = Math.round(Number(value) * 60);
-        if (value === '' && !f.required) continue;
+        // Empty optional fields arrive as null from the server; they are simply left out, not sent back.
+        if ((value === '' || value === null || value === undefined) && !f.required) continue;
         data[f.key] = value;
       }
       if (record?.id) data.id = record.id;
@@ -461,7 +464,7 @@ export function AdminResource({
     statuses = STATUS_FILTERS[resource];
   const columns: Record<string, string[]> = {
     vehicles: ['name', 'registration', 'type', 'operator', 'active'],
-    drivers: ['name', 'email', 'mobile', 'licenseExpiry', 'active'],
+    drivers: ['name', 'email', 'mobile', 'licenseExpiry', 'status'],
     locations: ['name', 'id'],
     routes: ['origin', 'destination', 'distanceKm', 'durationMinutes', 'baseFare', 'active'],
     fares: ['route', 'vehicleType', 'fare'],
@@ -746,7 +749,7 @@ function ManualBooking({ onClose }: { onClose: (reference?: string) => void }) {
     [key] = useState(() => crypto.randomUUID());
   const catalog = useQuery({
     queryKey: ['manual-trips'],
-    queryFn: () => api<{ items: Row[] }>(adminApi('trips?status=SCHEDULED')),
+    queryFn: () => api<{ items: Row[] }>(adminApi('trips?status=SCHEDULED&upcoming=1')),
   });
   const trip = useQuery({
     queryKey: ['trip', tripId],
@@ -821,7 +824,11 @@ function ManualBooking({ onClose }: { onClose: (reference?: string) => void }) {
       </label>
       <label>
         Phone
-        <input name="phone" type="tel" required />
+        <input name="phone" type="tel" required pattern={NEPAL_MOBILE_PATTERN} title="A Nepali mobile number such as 98XXXXXXXX" placeholder="98XXXXXXXX" />
+      </label>
+      <label>
+        Email (optional)
+        <input name="email" type="email" maxLength={254} />
       </label>
       <label>
         Payment method
@@ -852,6 +859,92 @@ function ManualBooking({ onClose }: { onClose: (reference?: string) => void }) {
         </Button>
       </div>
     </form>
+  );
+}
+type AuditRow = { id: string; action: string; actor: string; targetId: string; createdAt: string; details: unknown };
+/** Everything staff and the system did, newest first. Entries can be read here but never changed or removed. */
+export function AuditLogPage() {
+  const [page, setPage] = useState(1),
+    [search, setSearch] = useState('');
+  const q = useQuery({
+    queryKey: ['audit-log', page, search],
+    queryFn: () => api<{ items: AuditRow[]; nextPage: number | null }>(adminApi('audit-log?') + new URLSearchParams({ page: String(page), ...(search ? { q: search } : {}) })),
+    refetchInterval: 20000,
+  });
+  return (
+    <>
+      <p className="eyebrow">ACCOUNTABILITY</p>
+      <h1>Audit log</h1>
+      <p className="muted">Every sensitive action on the platform. Entries are permanent and cannot be edited.</p>
+      <form
+        className="toolbar"
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setPage(1);
+          setSearch(String(new FormData(e.currentTarget).get('q') || '').trim());
+        }}
+      >
+        <label className="toolbar-search">
+          <Search size={16} aria-hidden="true" />
+          <input name="q" key={search} defaultValue={search} placeholder="Action, record id or actor id" aria-label="Search the audit log" />
+        </label>
+        <Button variant="outline">Search</Button>
+        {search && (
+          <Button type="button" variant="outline" onClick={() => { setSearch(''); setPage(1); }}>
+            <X size={15} /> Clear
+          </Button>
+        )}
+      </form>
+      <ErrorBox error={q.error} />
+      {q.isLoading ? (
+        <Skeleton />
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table responsive">
+            <thead>
+              <tr>
+                <th>When (Nepal time)</th>
+                <th>Who</th>
+                <th>Action</th>
+                <th>Record</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {q.data?.items.map((row) => (
+                <tr key={row.id}>
+                  <td data-label="When">{new Date(row.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Kathmandu' })}</td>
+                  <td data-label="Who">{row.actor}</td>
+                  <td data-label="Action">{row.action.replaceAll('_', ' ').toLowerCase()}</td>
+                  <td data-label="Record" className="mono">{row.targetId}</td>
+                  <td data-label="Details">
+                    <details>
+                      <summary>View</summary>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, margin: 0 }}>{JSON.stringify(row.details, null, 2)}</pre>
+                    </details>
+                  </td>
+                </tr>
+              ))}
+              {!q.data?.items.length && (
+                <tr>
+                  <td colSpan={5}>{search ? 'Nothing matches this search.' : 'No activity yet.'}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="pagination">
+        <Button variant="outline" onClick={() => setPage((p) => p - 1)} disabled={page === 1}>
+          Previous
+        </Button>
+        <span>{page}</span>
+        <Button variant="outline" onClick={() => setPage((p) => p + 1)} disabled={!q.data?.nextPage}>
+          Next
+        </Button>
+      </div>
+    </>
   );
 }
 export function TicketCheckPage() {

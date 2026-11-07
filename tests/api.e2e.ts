@@ -163,9 +163,9 @@ async function findListed<T extends { id: string }>(path: string, id: string) {
 }
 
 test('health, 404s, CSRF origin guard and malformed JSON are answered correctly', async () => {
-  const h = await anon().get<{ status: string; database: string }>('/api/health');
+  const h = await anon().get<{ status: string; database: string; schema: string }>('/api/health');
   assert.equal(h.status, 200);
-  assert.deepEqual(h.data, { status: 'ready', database: 'up' });
+  assert.deepEqual(h.data, { status: 'ready', database: 'up', schema: 'up' });
   assert.equal((await anon().get('/api/nope')).status, 404);
   const noOrigin = await new ApiClient(BASE, 'https://evil.example').post('/api/bookings', {});
   assert.equal(noOrigin.status, 403);

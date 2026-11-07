@@ -14,3 +14,17 @@ Admin modules: GET/POST/PATCH /api/admin/:resource and DELETE /api/admin/:resour
 Driver self-service: GET/PATCH /api/driver/profile, POST /api/driver/password, GET /api/driver/fleet, POST /api/driver/submissions {kind:vehicles|routes|payment-qr,targetId?,payload}, DELETE /api/driver/submissions/:id, POST /api/driver/trips, POST /api/driver/trips/:id/cancel {reason}, POST /api/driver/uploads. Long-term schedules: GET/POST /api/driver/schedules; POST accepts {startsOn,endsOn,plans:[{routeId,vehicleId,paymentQRId,departureTime,fare?}]}, creates separate dated trips; PATCH /api/driver/schedules/:id accepts {action:pause|resume|cancel|extend,endsOn?}. Review: GET /api/admin/driver-submissions?status=, POST /api/admin/driver-submissions/:id {action:approve|reject,note}.
 Drivers: GET /api/driver/trips[/:id], GET /api/driver/passengers?tripId=, POST /api/driver/check-in {passengerId,status:CHECKED_IN|BOARDED}, POST /api/driver/validate-ticket {ticket}, POST /api/driver/issues {tripId,note}. Drivers cannot verify payments.
 GET /api/images/:objectId serves object data (proof: booking owner or admin; other images: public). Objects live in S3 when configured, otherwise under STORAGE_DIR. POST /api/jobs/expire requires Authorization Bearer CRON_SECRET; idempotent serializable transactions release non-confirmed claims, preserve evidence and deliver queued notifications.
+
+## Added by the system audit
+
+| Method and path | Who | Purpose |
+| --- | --- | --- |
+| `GET /api/trips/:id?from=&to=` | Public | Seat states, fare and times for the passenger's journey. `bookingOpen` is false unless a booking would actually succeed. |
+| `GET /api/admin/audit-log?page=&q=&action=` | Admin | The audit trail, newest first, 50 per page, with each actor's name. |
+| `GET /api/admin/payments?page=&status=&q=` | Admin | Payments filtered on the server by status and by reference, name, phone or transaction. |
+| `GET /api/admin/trips?status=&upcoming=1` | Admin | `upcoming=1` lists future departures, soonest first. |
+| `GET /api/driver/trips?days=1\|7\|30\|90` | Driver | Trips in the Nepal-calendar window, plus any trip still boarding or on the road. |
+| `POST /api/driver/bookings/:id/cancel` | Driver | Body `{reason}`. Own trips only. Verified money becomes a refund record. |
+| `PATCH /api/driver/trip-seats/:id` | Driver | Body `{blocked, note}`. Blocks or unblocks a free seat on one departure. |
+
+`GET /api/admin/reports` counts Nepal calendar days ending today and adds `refunded`. `scheduledTrips`, `pending`, `reconciliation` and `openRefunds` are current work queues, not limited to the period.

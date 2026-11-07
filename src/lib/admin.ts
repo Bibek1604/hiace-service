@@ -8,6 +8,7 @@ import { seatsForVehicle } from './layouts';
 import { buildFareMatrix, type TripStop } from './inventory';
 import { tripTransitionAllowed } from './cancellations';
 import { buildSequence, checkPoint, stopInput, validateSequence, type StopInput } from './route-stops';
+import { DAY_MS, nepalDayStart } from './nepal-time';
 const text = z.string().trim().min(1).max(250),
   phone = z.string().regex(/^\+?\d{7,15}$/),
   positive = z.coerce.number().int().positive();
@@ -39,7 +40,7 @@ const shapes = {
     emergencyContact: phone,
     address: z.string().max(500).optional(),
     photoKey: z.string().optional(),
-    active: z.boolean().default(true),
+    active: z.boolean().optional(),
     status: z.enum(['ACTIVE', 'DEACTIVATED', 'SUSPENDED']).optional(),
   }),
   locations: z.object({ id: z.string().optional(), name: text }),
@@ -258,7 +259,7 @@ export async function save(
         });
       }
     } else if (resource === 'drivers') {
-      const { id, password, status, ...data } = shapes.drivers.parse(raw);
+      const { id, password, status, active, ...data } = shapes.drivers.parse(raw);
       if (!id && !password) throw new ApiError(400, 'A driver password is required.');
       if (
         data.photoKey &&
@@ -269,7 +270,9 @@ export async function save(
       const secret = password ? { passwordHash: await passwordHash(password) } : {};
       // A password reset ends every sign-in made with the old one.
       if (id && password) await tx.session.deleteMany({ where: { driverId: id } });
-      const nextStatus = status ?? (data.active ? 'ACTIVE' : 'DEACTIVATED');
+      // An edit that names neither keeps the account as it is, so changing a phone number never reinstates anyone.
+      const existing = id ? await tx.driver.findUnique({ where: { id }, select: { status: true } }) : null;
+      const nextStatus = status ?? (active === undefined ? (existing?.status ?? 'ACTIVE') : active ? 'ACTIVE' : 'DEACTIVATED');
       const driverData = { ...data, active: nextStatus === 'ACTIVE', status: nextStatus };
       result = id
         ? await tx.driver.update({
@@ -313,7 +316,10 @@ export async function save(
           allowBoarding: true,
           allowDropoff: true,
         }));
-      if (middle) {
+      // Forms that resend the same stops in order are not editing them; only a real change replaces the timeline.
+      const current = id && !stops && stopIds ? await tx.routeStop.findMany({ where: { routeId: id }, orderBy: { position: 'asc' }, select: { locationId: true } }) : null;
+      const unchanged = !!current && current.map((s) => s.locationId).join() === stopIds!.join();
+      if (middle && !unchanged) {
         const sequence = buildSequence(data, middle);
         const problems = validateSequence(sequence);
         if (problems.length) throw new ApiError(400, problems.join(' '));
@@ -393,8 +399,9 @@ export async function save(
         if (
           old.vehicleId !== data.vehicleId ||
           old.routeId !== data.routeId ||
-          old.departure.getTime() !== departure.getTime() ||
-          old.arrival.getTime() !== arrival.getTime()
+          // Forms edit whole minutes, so a stored time with seconds still counts as unchanged.
+          Math.floor(old.departure.getTime() / 60000) !== Math.floor(departure.getTime() / 60000) ||
+          Math.floor(old.arrival.getTime() / 60000) !== Math.floor(arrival.getTime() / 60000)
         )
           throw new ApiError(
             409,
@@ -419,7 +426,17 @@ export async function save(
             data: buildFareMatrix(seq, data.fare).map((f) => ({ ...f, tripId: id })),
           });
         }
-        result = await tx.trip.update({ where: { id }, data: { ...data, departure, arrival, bookingOpensAt, bookingClosesAt } });
+        // The admin form has no booking-window fields; leaving them out must not erase the driver's window.
+        result = await tx.trip.update({
+          where: { id },
+          data: {
+            ...data,
+            departure: old.departure,
+            arrival: old.arrival,
+            ...(data.bookingOpensAt !== undefined ? { bookingOpensAt } : {}),
+            ...(data.bookingClosesAt !== undefined ? { bookingClosesAt } : {}),
+          },
+        });
         if (data.status === 'CANCELLED') {
           await tx.tripDriverAssignment.updateMany({
             where: { tripId: id, endedAt: null },
@@ -470,9 +487,10 @@ export async function save(
 }
 const BOOKING_STATUSES = ['HELD', 'PAYMENT_REVIEW', 'CONFIRMED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'PAYMENT_RECONCILIATION_REQUIRED'] as const;
 const TRIP_STATUSES = ['SCHEDULED', 'BOARDING', 'DEPARTED', 'COMPLETED', 'CANCELLED'] as const;
+const PAYMENT_STATUSES = ['UNPAID', 'SUBMITTED', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED'] as const;
 const pick = <T extends string>(all: readonly T[], v?: string) => (all as readonly string[]).includes(v ?? '') ? (v as T) : undefined;
 const like = (q: string) => ({ contains: q, mode: 'insensitive' as const });
-export async function list(resource: string, page: number, scope: Scope = null, filters: { q?: string; status?: string } = {}) {
+export async function list(resource: string, page: number, scope: Scope = null, filters: { q?: string; status?: string; upcoming?: boolean } = {}) {
   const q = filters.q;
   if (
     scope &&
@@ -501,6 +519,7 @@ export async function list(resource: string, page: number, scope: Scope = null, 
           licenseNumber: true,
           licenseExpiry: true,
           active: true,
+          status: true,
           emergencyContact: true,
           address: true,
           photoKey: true,
@@ -512,7 +531,7 @@ export async function list(resource: string, page: number, scope: Scope = null, 
       return db.route.findMany({
         ...args,
         where: { ...t, ...(q ? { OR: [{ origin: { name: like(q) } }, { destination: { name: like(q) } }] } : {}) },
-        include: { origin: true, destination: true, stops: true },
+        include: { origin: true, destination: true, stops: { orderBy: { position: 'asc' } } },
       });
     case 'fares':
       return db.routeFare.findMany({
@@ -526,9 +545,11 @@ export async function list(resource: string, page: number, scope: Scope = null, 
         where: {
           ...t,
           status: pick(TRIP_STATUSES, filters.status),
+          ...(filters.upcoming ? { departure: { gt: new Date() } } : {}),
           ...(q ? { OR: [{ vehicle: { name: like(q) } }, { vehicle: { registration: like(q) } }, { route: { origin: { name: like(q) } } }, { route: { destination: { name: like(q) } } }] } : {}),
         },
-        orderBy: { departure: 'desc' },
+        // Staff picking a departure want the next ones first; the full list shows the newest first.
+        orderBy: { departure: filters.upcoming ? 'asc' : 'desc' },
         include: {
           vehicle: true,
           route: { include: { origin: true, destination: true } },
@@ -569,7 +590,11 @@ export async function list(resource: string, page: number, scope: Scope = null, 
     case 'payments':
       return db.payment.findMany({
         ...args,
-        where: scope ? { booking: t } : {},
+        where: {
+          ...(scope ? { booking: t } : {}),
+          status: pick(PAYMENT_STATUSES, filters.status),
+          ...(q ? { OR: [{ transactionRef: { contains: q.toUpperCase().replace(/\s+/g, '') } }, { booking: { reference: like(q) } }, { booking: { customer: { name: like(q) } } }, { booking: { customer: { phone: { contains: q } } } }] } : {}),
+        },
         orderBy: { booking: { createdAt: 'desc' } },
         include: {
           proofs: true,
@@ -592,6 +617,75 @@ export async function list(resource: string, page: number, scope: Scope = null, 
     default:
       throw new ApiError(404, 'Unknown module.');
   }
+}
+/**
+ * Dashboard figures for the Nepal calendar days ending today. Work queues (payments to review, open refunds,
+ * reconciliation, trips still to run) are never windowed: an old case must not vanish because it is old.
+ */
+export async function reportSummary(days: number) {
+  const now = new Date(),
+    today = nepalDayStart(now),
+    since = new Date(today.getTime() - (days - 1) * DAY_MS),
+    until = new Date(today.getTime() + DAY_MS);
+  const tripWindow = { departure: { gte: since, lt: until } },
+    bookingWindow = { createdAt: { gte: since, lt: until } };
+  const [vehicles, drivers, routes, tripsByStatus, upcomingTrips, bookingsByStatus, pending, reconciliation, revenue, refunded, openRefunds, driverRequests] = await Promise.all([
+    db.vehicle.count(),
+    db.driver.count(),
+    db.route.count(),
+    db.trip.groupBy({ by: ['status'], where: tripWindow, _count: { _all: true } }),
+    db.trip.count({ where: { status: { in: ['SCHEDULED', 'BOARDING'] }, departure: { gte: now } } }),
+    db.booking.groupBy({ by: ['status'], where: bookingWindow, _count: { _all: true } }),
+    // Proofs of bookings that were cancelled meanwhile are no longer waiting for a decision.
+    db.payment.count({ where: { status: { in: ['SUBMITTED', 'UNDER_REVIEW'] }, booking: { status: { notIn: ['CANCELLED', 'REJECTED'] } } } }),
+    db.booking.count({ where: { status: 'PAYMENT_RECONCILIATION_REQUIRED' } }),
+    db.payment.aggregate({ where: { booking: bookingWindow, status: 'VERIFIED' }, _sum: { verifiedAmount: true } }),
+    db.bookingCancellation.aggregate({ where: { refundStatus: 'COMPLETED', refundUpdatedAt: { gte: since, lt: until } }, _sum: { refundAmount: true } }),
+    db.bookingCancellation.count({ where: { refundStatus: { in: ['REVIEW_REQUIRED', 'PENDING', 'APPROVED'] } } }),
+    db.driverSubmission.count({ where: { status: 'PENDING' } }),
+  ]);
+  const trip = (s: string) => tripsByStatus.find((x) => x.status === s)?._count._all ?? 0,
+    booking = (s: string) => bookingsByStatus.find((x) => x.status === s)?._count._all ?? 0;
+  return {
+    days,
+    vehicles,
+    drivers,
+    routes,
+    trips: tripsByStatus.reduce((n, x) => n + x._count._all, 0),
+    scheduledTrips: upcomingTrips,
+    completedTrips: trip('COMPLETED'),
+    cancelledTrips: trip('CANCELLED'),
+    bookings: bookingsByStatus.reduce((n, x) => n + x._count._all, 0),
+    confirmed: booking('CONFIRMED'),
+    cancelledBookings: booking('CANCELLED'),
+    pending,
+    reconciliation,
+    openRefunds,
+    driverRequests,
+    revenue: revenue._sum.verifiedAmount || 0,
+    refunded: refunded._sum.refundAmount || 0,
+  };
+}
+
+/** The platform-wide audit trail, newest first, with each actor's name instead of an internal id. */
+export async function auditLog(page: number, filters: { q?: string; action?: string } = {}) {
+  const rows = await db.auditLog.findMany({
+    where: {
+      ...(filters.action ? { action: filters.action } : {}),
+      ...(filters.q ? { OR: [{ action: like(filters.q) }, { targetId: { contains: filters.q } }, { actorId: { contains: filters.q } }] } : {}),
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip: (page - 1) * 50,
+    take: 51,
+  });
+  const ids = [...new Set(rows.map((r) => r.actorId))];
+  const [admins, drivers] = await Promise.all([
+    db.adminUser.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
+    db.driver.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
+  ]);
+  const names = new Map([...admins.map((a) => [a.id, 'Admin: ' + a.name] as const), ...drivers.map((d) => [d.id, 'Driver: ' + d.name] as const)]);
+  const label = (id: string) => names.get(id) ?? (id === 'GUEST' ? 'Passenger' : id === 'SYSTEM' ? 'System' : id);
+  return { items: rows.slice(0, 50).map((r) => ({ ...r, actor: label(r.actorId) })), nextPage: rows.length > 50 ? page + 1 : null };
 }
 const LABEL: Record<string, string> = {
   vehicles: 'vehicle',

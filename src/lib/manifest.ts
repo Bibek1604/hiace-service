@@ -1,5 +1,6 @@
 import { db } from './db';
 import { ApiError } from './security';
+import { nepalDateString } from './nepal-time';
 
 /** Quotes a CSV cell and defuses spreadsheet formulas (a leading =, +, -, @, tab or CR would execute). */
 export function csvCell(value: unknown): string {
@@ -48,7 +49,7 @@ export async function tripManifest(tripId: string, scope: string | null) {
   for (const p of passengers)
     lines.push(csvRow([...fixed, p.seatLabel, p.name, p.phone, p.boardingPoint, p.destination, p.booking.reference, p.checkIn?.status ?? 'PENDING']));
   if (!passengers.length) lines.push(csvRow([...fixed, '', 'No confirmed passengers', '', '', '', '', '']));
-  const date = trip.departure.toISOString().slice(0, 10);
+  const date = nepalDateString(trip.departure);
   // A UTF-8 byte-order mark lets Excel read Nepali names correctly.
   return {
     body: '﻿' + lines.join('\r\n') + '\r\n',

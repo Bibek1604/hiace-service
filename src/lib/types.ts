@@ -8,6 +8,11 @@ export type TripView = {
   status: string;
   bookingOpen: boolean;
   available?: number;
+  stops: TripStopView[];
+  journey: { from: number; to: number };
+  boardsAt: string;
+  dropsAt: string;
+  points?: BoardingPointView[];
   vehicle: {
     id: string;
     name: string;
@@ -27,8 +32,10 @@ export type TripView = {
     stops: { location: { name: string } }[];
   };
   assignments: { driver: { name: string; photoKey?: string } }[];
-  seats: { id: string; label: string; row: number; column: number; state: string }[];
+  seats: { id: string; label: string; row: number; column: number; deck: number; state: string }[];
 };
+export type TripStopView = { locationId: string; name: string; offsetMinutes: number; allowBoarding: boolean; allowDropoff: boolean };
+export type BoardingPointView = { id: string; locationId: string; kind: 'BOARDING' | 'DROPOFF'; name: string; landmark: string; extraMinutes: number };
 export type BookingView = {
   id: string;
   reference: string;
@@ -38,6 +45,7 @@ export type BookingView = {
   createdAt: string;
   customer: { name: string; phone: string };
   trip: TripView;
+  journey: { from: string; to: string; boardsAt: string; dropsAt: string; boardingPoint: string; dropPoint: string };
   seats: { tripSeat: { vehicleSeat: { label: string } } }[];
   payment: {
     id: string;

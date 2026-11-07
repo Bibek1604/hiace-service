@@ -18,10 +18,12 @@ import {
   Ticket,
 } from 'lucide-react';
 import { api, ErrorBox, Skeleton, Badge, Sheet, Empty, Unavailable, onForm } from './common';
+import { NEPAL_MOBILE_PATTERN } from '@/lib/phone';
 import { useSite } from './site-context';
 import { Button } from './ui/button';
 import { money, nepalTime, travelHours } from '@/lib/utils';
 import type { BookingView, TripView } from '@/lib/types';
+import { MAX_ROWS } from '@/lib/seat-layout';
 const dateLabel = (d: string) =>
   new Date(d).toLocaleDateString('en-GB', {
     timeZone: 'Asia/Kathmandu',
@@ -92,6 +94,11 @@ export function SearchForm({ initial = {} }: { initial?: Record<string, string> 
 }
 export function TripCard({ trip: t }: { trip: TripView }) {
   const copy = useSite().copy;
+  // The seat page opens on the journey that was searched, with the same fare this card shows.
+  const from = t.stops[t.journey.from],
+    to = t.stops[t.journey.to],
+    partial = t.journey.from !== 0 || t.journey.to !== t.stops.length - 1;
+  const journey = partial ? '?' + new URLSearchParams({ from: from.locationId, to: to.locationId }) : '';
   return (
     <article className="trip-card">
       {t.vehicle.images[0] ? (
@@ -119,22 +126,27 @@ export function TripCard({ trip: t }: { trip: TripView }) {
           />
         </div>
         <div className="trip-route">
-          {t.route.origin.name} <span className="blue">→</span> {t.route.destination.name}
+          {from.name} <span className="blue">→</span> {to.name}
         </div>
+        {partial && (
+          <div className="muted" style={{ fontSize: 11 }}>
+            Part of {t.route.origin.name} → {t.route.destination.name}
+          </div>
+        )}
         <div className="times">
           <div>
-            <strong>{nepalTime(t.departure)}</strong>
+            <strong>{nepalTime(t.boardsAt)}</strong>
             <div className="muted" style={{ fontSize: 10 }}>
-              {dateLabel(t.departure)}
+              {dateLabel(t.boardsAt)}
             </div>
           </div>
           <span className="line" />
           <Clock3 size={15} className="muted" />
           <span className="muted" style={{ fontSize: 11 }}>
-            {travelHours(t.route.durationMinutes)}
+            {travelHours(to.offsetMinutes - from.offsetMinutes)}
           </span>
           <span className="line" />
-          <strong>{nepalTime(t.arrival)}</strong>
+          <strong>{nepalTime(t.dropsAt)}</strong>
         </div>
         <div className="trip-meta">
           {t.vehicle.amenities.map((a) => (
@@ -145,7 +157,7 @@ export function TripCard({ trip: t }: { trip: TripView }) {
           <span className="price">
             {money(t.fare)} <small>{copy.search.perSeat}</small>
           </span>
-          <Link href={'/trips/' + t.id} className="button">
+          <Link href={'/trips/' + t.id + journey} className="button">
             Choose seats <ArrowRight size={15} />
           </Link>
         </div>
@@ -215,12 +227,47 @@ export function TripResults({ filters = '', home = false }: { filters?: string; 
     </>
   );
 }
-export function TripDetail({ id }: { id: string }) {
+/** One deck of the seat map, laid out from the seats' real rows and columns. An unused column is an aisle. */
+function SeatDeck({ seats, chosen, disabled, onToggle }: { seats: TripView['seats']; chosen: string[]; disabled: boolean; onToggle: (id: string) => void }) {
+  const used = new Set(seats.map((s) => s.column)),
+    last = Math.max(...used);
+  // Plain four-across vehicles have no aisle column of their own, so it goes down the middle.
+  const aisle = last === 3 && used.size === 4;
+  const tracks = aisle
+    ? ['minmax(0, 1fr)', 'minmax(0, 1fr)', '22px', 'minmax(0, 1fr)', 'minmax(0, 1fr)']
+    : Array.from({ length: last + 1 }, (_, c) => (used.has(c) ? 'minmax(0, 1fr)' : '22px'));
+  return (
+    <div className="seat-grid" style={{ gridTemplateColumns: tracks.join(' ') }}>
+      {[...seats]
+        .sort((a, b) => a.row - b.row || a.column - b.column)
+        .map((s) => (
+          <button
+            key={s.id}
+            aria-label={'Seat ' + s.label + ', ' + (chosen.includes(s.id) ? 'selected' : s.state.toLowerCase())}
+            aria-pressed={chosen.includes(s.id)}
+            className={'seat ' + (chosen.includes(s.id) ? 'selected' : s.state.toLowerCase())}
+            style={{ gridColumn: aisle && s.column >= 2 ? s.column + 2 : s.column + 1, gridRow: (s.row % MAX_ROWS) + 1 }}
+            disabled={s.state !== 'AVAILABLE' || disabled}
+            onClick={() => onToggle(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+    </div>
+  );
+}
+export function TripDetail({ id, from: firstFrom = '', to: firstTo = '' }: { id: string; from?: string; to?: string }) {
   const copy = useSite().copy;
+  const [journey, setJourney] = useState({ from: firstFrom, to: firstTo }),
+    [boardingPointId, setBoardingPointId] = useState(''),
+    [dropPointId, setDropPointId] = useState('');
+  const params = new URLSearchParams(journey.from && journey.to ? journey : {});
   const q = useQuery({
-    queryKey: ['trip', id],
-    queryFn: () => api<TripView>('/api/trips/' + id),
+    queryKey: ['trip', id, journey.from, journey.to],
+    queryFn: () => api<TripView>('/api/trips/' + id + (params.size ? '?' + params : '')),
     refetchInterval: 5000,
+    placeholderData: (old) => old,
+    retry: false,
   });
   const [selected, setSelected] = useState<string[]>([]),
     [open, setOpen] = useState(false),
@@ -235,16 +282,33 @@ export function TripDetail({ id }: { id: string }) {
   }, [id]);
   const t = q.data,
     valid = selected.filter((s) => t?.seats.some((x) => x.id === s && x.state === 'AVAILABLE'));
+  const here = t ? t.stops[t.journey.from] : undefined,
+    there = t ? t.stops[t.journey.to] : undefined;
+  const fare = t?.fare ?? null,
+    closed = !t || !t.bookingOpen || t.status !== 'SCHEDULED' || fare === null;
+  function chooseJourney(from: string, to: string) {
+    setJourney({ from, to });
+    setBoardingPointId('');
+    setDropPointId('');
+    setError(null);
+  }
   async function book(form: FormData) {
     setPending(true);
     setError(null);
     try {
       let key = sessionStorage.getItem('reserve_' + id);
+      const trip = {
+        fromLocationId: here!.locationId,
+        toLocationId: there!.locationId,
+        ...(boardingPointId ? { boardingPointId } : {}),
+        ...(dropPointId ? { dropPointId } : {}),
+      };
       const fingerprint = JSON.stringify({
         seats: valid,
         name: form.get('name'),
         phone: form.get('phone'),
         email: form.get('email'),
+        ...trip,
       });
       if (sessionStorage.getItem('reserve_data_' + id) !== fingerprint || !key) {
         key = crypto.randomUUID();
@@ -260,9 +324,13 @@ export function TripDetail({ id }: { id: string }) {
           phone: form.get('phone'),
           email: form.get('email'),
           idempotencyKey: key,
+          ...trip,
         }),
       });
       localStorage.removeItem('seats_' + id);
+      // A finished reservation must not be replayed: picking these seats again later is a new booking.
+      sessionStorage.removeItem('reserve_' + id);
+      sessionStorage.removeItem('reserve_data_' + id);
       router.push('/booking/' + b.id);
     } catch (e) {
       setError(e);
@@ -284,6 +352,16 @@ export function TripDetail({ id }: { id: string }) {
       </main>
     );
   const labels = valid.map((s) => t.seats.find((x) => x.id === s)!.label);
+  const boardable = t.stops.slice(0, -1).filter((s) => s.allowBoarding),
+    droppable = t.stops.slice(t.journey.from + 1).filter((s) => s.allowDropoff),
+    pickups = t.points?.filter((p) => p.kind === 'BOARDING' && p.locationId === here!.locationId) ?? [],
+    drops = t.points?.filter((p) => p.kind === 'DROPOFF' && p.locationId === there!.locationId) ?? [],
+    decks = [...new Set(t.seats.map((s) => s.deck))].sort((a, b) => a - b);
+  const toggle = (seat: string) => {
+    const next = valid.includes(seat) ? valid.filter((v) => v !== seat) : valid.length < 8 ? [...valid, seat] : valid;
+    setSelected(next);
+    localStorage.setItem('seats_' + id, JSON.stringify(next));
+  };
   return (
     <main className="container narrow">
       <Link href="/search" className="muted row">
@@ -351,9 +429,96 @@ export function TripDetail({ id }: { id: string }) {
             <Badge key={a} status={a} />
           ))}
         </div>
-        {t.route.stops.length > 0 && (
-          <p>Via {t.route.stops.map((s) => s.location.name).join(' · ')}</p>
+      </div>
+      <div className="card stack">
+        <h2>Your journey</h2>
+        {t.stops.length > 2 && (
+          <ol className="stop-line" aria-label="Stops on this trip">
+            {t.stops.map((s, i) => (
+              <li key={s.locationId} className={i >= t.journey.from && i <= t.journey.to ? 'on-journey' : undefined}>
+                <strong>{s.name}</strong>
+                <small className="muted">{nepalTime(new Date(new Date(t.departure).getTime() + s.offsetMinutes * 60000))}</small>
+              </li>
+            ))}
+          </ol>
         )}
+        <div className="grid-2">
+          <label>
+            Boarding stop
+            <select
+              value={here!.locationId}
+              onChange={(e) => {
+                const at = t.stops.findIndex((s) => s.locationId === e.target.value);
+                // The drop-off stays if it is still ahead of the new boarding stop.
+                chooseJourney(e.target.value, at < t.journey.to ? there!.locationId : t.stops[t.stops.length - 1].locationId);
+              }}
+            >
+              {boardable.map((s) => (
+                <option key={s.locationId} value={s.locationId}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Drop-off stop
+            <select value={there!.locationId} onChange={(e) => chooseJourney(here!.locationId, e.target.value)}>
+              {droppable.map((s) => (
+                <option key={s.locationId} value={s.locationId}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {pickups.length > 0 && (
+            <label>
+              Pickup point
+              <select value={boardingPointId} onChange={(e) => setBoardingPointId(e.target.value)}>
+                <option value="">{t.journey.from === 0 ? t.boardingPoint : here!.name}</option>
+                {pickups.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.landmark ? ' · ' + p.landmark : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {drops.length > 0 && (
+            <label>
+              Drop-off point
+              <select value={dropPointId} onChange={(e) => setDropPointId(e.target.value)}>
+                <option value="">{t.journey.to === t.stops.length - 1 ? t.dropPoint : there!.name}</option>
+                {drops.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.landmark ? ' · ' + p.landmark : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        <dl className="definition">
+          <div>
+            <dt>Boards at</dt>
+            <dd>
+              {dateLabel(t.boardsAt)} · {nepalTime(t.boardsAt)}
+            </dd>
+          </div>
+          <div>
+            <dt>Reaches</dt>
+            <dd>
+              {dateLabel(t.dropsAt)} · {nepalTime(t.dropsAt)}
+            </dd>
+          </div>
+          <div>
+            <dt>Fare per seat</dt>
+            <dd className="price">{fare === null ? 'Not sold' : money(fare)}</dd>
+          </div>
+        </dl>
+        {fare === null && <p className="notice">This journey is not sold on this trip. Choose other stops.</p>}
+        {!t.bookingOpen && <p className="notice">Booking is closed for this departure.</p>}
       </div>
       <div className="card">
         <div className="spread">
@@ -382,39 +547,12 @@ export function TripDetail({ id }: { id: string }) {
             <span>{copy.trip.front}</span>
             <CircleGauge size={27} />
           </div>
-          <div className="seat-grid">
-            {t.seats
-              .sort((a, b) => a.row - b.row || a.column - b.column)
-              .map((s) => (
-                <button
-                  key={s.id}
-                  aria-label={
-                    'Seat ' +
-                    s.label +
-                    ', ' +
-                    (valid.includes(s.id) ? 'selected' : s.state.toLowerCase())
-                  }
-                  aria-pressed={valid.includes(s.id)}
-                  className={'seat ' + (valid.includes(s.id) ? 'selected' : s.state.toLowerCase())}
-                  style={{
-                    gridColumn: s.column >= 2 ? s.column + 2 : s.column + 1,
-                    gridRow: s.row + 1,
-                  }}
-                  disabled={s.state !== 'AVAILABLE' || !t.bookingOpen || t.status !== 'SCHEDULED'}
-                  onClick={() => {
-                    const next = valid.includes(s.id)
-                      ? valid.filter((v) => v !== s.id)
-                      : valid.length < 8
-                        ? [...valid, s.id]
-                        : valid;
-                    setSelected(next);
-                    localStorage.setItem('seats_' + id, JSON.stringify(next));
-                  }}
-                >
-                  {s.label}
-                </button>
-              ))}
-          </div>
+          {decks.map((deck) => (
+            <div key={deck} className="seat-deck">
+              {decks.length > 1 && <h3>{deck === 0 ? 'Lower deck' : 'Upper deck'}</h3>}
+              <SeatDeck seats={t.seats.filter((s) => s.deck === deck)} chosen={valid} disabled={closed} onToggle={toggle} />
+            </div>
+          ))}
         </div>
         <p className="muted" style={{ textAlign: 'center', fontSize: 11 }}>
           Seats are held only after you submit contact details.
@@ -426,18 +564,17 @@ export function TripDetail({ id }: { id: string }) {
           <small className="muted">
             {labels.length ? 'Seats ' + labels.join(', ') : copy.trip.selectSeats}
           </small>
-          <div className="price">{money(valid.length * t.fare)}</div>
+          <div className="price">{money(valid.length * (fare ?? 0))}</div>
         </div>
-        <Button
-          disabled={!valid.length || !t.bookingOpen || t.status !== 'SCHEDULED'}
-          onClick={() => setOpen(true)}
-        >
+        <Button disabled={!valid.length || closed} onClick={() => setOpen(true)}>
           Continue <ArrowRight size={17} />
         </Button>
       </div>
       <Sheet open={open} onOpenChange={setOpen} title={copy.trip.travellerSheet}>
         <p className="notice">
-          Seats {labels.join(', ')} · {money(valid.length * t.fare)}
+          {here!.name} → {there!.name}
+          <br />
+          Seats {labels.join(', ')} · {money(valid.length * (fare ?? 0))}
           <br />
           No account needed. Your seats will be held while you pay.
         </p>
@@ -460,7 +597,8 @@ export function TripDetail({ id }: { id: string }) {
               required
               type="tel"
               autoComplete="tel"
-              pattern="(\+977)?[0-9]{10}"
+              pattern={NEPAL_MOBILE_PATTERN}
+              title="A Nepali mobile number such as 98XXXXXXXX"
               placeholder="98XXXXXXXX"
             />
           </label>
@@ -584,7 +722,7 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
           <Ticket className="blue" size={30} />
         </div>
         <h3>
-          {b.trip.route.origin.name} → {b.trip.route.destination.name}
+          {b.journey.from} → {b.journey.to}
         </h3>
         <dl className="definition">
           <div>
@@ -596,11 +734,19 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
             <dd>{b.customer.phone}</dd>
           </div>
           <div>
-            <dt>Departure</dt>
+            <dt>Boards at</dt>
             <dd>
-              {dateLabel(b.trip.departure)}
+              {dateLabel(b.journey.boardsAt)}
               <br />
-              {nepalTime(b.trip.departure)}
+              {nepalTime(b.journey.boardsAt)}
+            </dd>
+          </div>
+          <div>
+            <dt>Reaches</dt>
+            <dd>
+              {dateLabel(b.journey.dropsAt)}
+              <br />
+              {nepalTime(b.journey.dropsAt)}
             </dd>
           </div>
           <div>
@@ -621,11 +767,17 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
           </div>
           <div>
             <dt>Boarding point</dt>
-            <dd>{b.trip.boardingPoint}</dd>
+            <dd>{b.journey.boardingPoint}</dd>
           </div>
           <div>
             <dt>Drop-off point</dt>
-            <dd>{b.trip.dropPoint}</dd>
+            <dd>{b.journey.dropPoint}</dd>
+          </div>
+          <div>
+            <dt>Driver contact</dt>
+            <dd>
+              <a href={'tel:' + b.trip.vehicle.operatorContact}>{b.trip.vehicle.operatorContact}</a>
+            </dd>
           </div>
         </dl>
       </div>
@@ -633,7 +785,7 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
         <div className="notice">
           <strong>{copy.booking.proofSubmitted}</strong>
           <p>
-            An admin will check the actual bank or wallet transaction. Seat review window:{' '}
+            The driver will check the actual bank or wallet transaction. Seat review window:{' '}
             <Deadline value={b.expiresAt} />. Uploading a screenshot does not confirm payment.
           </p>
         </div>
@@ -657,6 +809,12 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
         <div className="notice">
           Your payment deadline passed and seats have been released. If you already paid, contact
           the driver before booking again.
+        </div>
+      )}
+      {b.status === 'CANCELLED' && (
+        <div className="notice">
+          This booking was cancelled and its seats were released. If you already paid, the driver will contact you about
+          your refund.
         </div>
       )}
       {b.status === 'REJECTED' && (
@@ -733,8 +891,8 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
           <div className="card">
             <h2>{copy.booking.proofHeading}</h2>
             <p className="muted">
-              Pay first, then upload a clear screenshot with transaction details. Admin verification
-              is required.
+              Pay first, then upload a clear screenshot with transaction details. The driver
+              confirms your seat after checking the payment.
             </p>
             <form onSubmit={onForm(submit)} className="stack">
               <label>
@@ -886,6 +1044,8 @@ export function TrackBooking() {
                   name="phone"
                   required
                   autoComplete="tel"
+                  pattern={NEPAL_MOBILE_PATTERN}
+                  title="The Nepali mobile number used for the booking, such as 98XXXXXXXX"
                   placeholder="98XXXXXXXX"
                 />
               </label>

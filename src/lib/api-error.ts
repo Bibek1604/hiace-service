@@ -59,7 +59,10 @@ export function classifyError(error: unknown): Classified {
 
 /** One-line, PII-free description for server logs. */
 export function describeError(error: unknown) {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) return error.name + ':' + error.code;
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    const model = typeof error.meta?.modelName === 'string' ? ':model=' + error.meta.modelName : '';
+    return error.name + ':' + error.code + model;
+  }
   if (error instanceof Error) return error.name + ': ' + error.message.split('\n').find((l) => l.trim())?.slice(0, 200);
   return 'UnknownError';
 }

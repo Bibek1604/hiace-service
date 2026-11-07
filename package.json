@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "check": "prisma validate && prisma generate && tsc --noEmit && eslint .",
     "test": "tsx --test tests/*.test.ts",
-    "test:integration": "tsx --test tests/integration.ts tests/tenancy.ts tests/segments.ts tests/crud.ts tests/cancellation.ts tests/driver-portal.ts",
+    "test:integration": "tsx --test tests/integration.ts tests/tenancy.ts tests/segments.ts tests/crud.ts tests/cancellation.ts tests/driver-portal.ts tests/regressions.ts",
     "test:api": "tsx --test --test-timeout=120000 tests/api.e2e.ts",
     "test:e2e": "playwright test",
     "test:all": "npm run check && npm test && npm run test:integration && npm run build && npm run test:api && npm run test:e2e",

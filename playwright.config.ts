@@ -5,7 +5,7 @@ export default defineConfig({
   workers: 2,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
-  use: { baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000', trace: 'retain-on-failure' },
+  use: { baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000', trace: 'retain-on-failure', actionTimeout: 20000 },
   projects: [
     // Phone sizes are emulated in Chromium (touch, mobile viewport, user agent) so one installed browser covers every size.
     { name: 'mobile-320', use: { ...devices['iPhone SE'], defaultBrowserType: 'chromium', viewport: { width: 320, height: 640 } } },

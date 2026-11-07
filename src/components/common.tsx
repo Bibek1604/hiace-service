@@ -97,6 +97,64 @@ export function Sheet({
     </Dialog.Root>
   );
 }
+export type AskField = {
+  name: string;
+  label: string;
+  type?: 'text' | 'textarea' | 'number' | 'date' | 'checkbox';
+  required?: boolean;
+  min?: number | string;
+  minLength?: number;
+  maxLength?: number;
+  defaultValue?: string;
+  placeholder?: string;
+};
+type Ask = { title: string; description?: string; confirm: string; destructive?: boolean; fields: AskField[] };
+/**
+ * In-page replacement for window.prompt: labelled fields, native validation, and a promise of the answers
+ * (null when dismissed). Render `dialog` once in the component that calls `ask`.
+ */
+export function useAsk() {
+  const [asked, setAsked] = useState<(Ask & { resolve: (answers: Record<string, string> | null) => void }) | null>(null);
+  const ask = (a: Ask) => new Promise<Record<string, string> | null>((resolve) => setAsked({ ...a, resolve }));
+  const close = (answers: Record<string, string> | null) => {
+    asked?.resolve(answers);
+    setAsked(null);
+  };
+  const dialog = (
+    <Sheet open={!!asked} onOpenChange={(o) => !o && close(null)} title={asked?.title ?? ''} description={asked?.description}>
+      {asked && (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            close(Object.fromEntries([...new FormData(e.currentTarget)].map(([k, v]) => [k, String(v)])));
+          }}
+        >
+          {asked.fields.map((f) =>
+            f.type === 'checkbox' ? (
+              <label className="row" key={f.name}>
+                <input type="checkbox" name={f.name} required={f.required} />
+                {f.label}
+              </label>
+            ) : f.type === 'textarea' ? (
+              <label key={f.name}>
+                {f.label}
+                <textarea name={f.name} required={f.required} minLength={f.minLength} maxLength={f.maxLength} defaultValue={f.defaultValue} placeholder={f.placeholder} />
+              </label>
+            ) : (
+              <label key={f.name}>
+                {f.label}
+                <input name={f.name} type={f.type ?? 'text'} required={f.required} min={f.min} minLength={f.minLength} maxLength={f.maxLength} defaultValue={f.defaultValue} placeholder={f.placeholder} />
+              </label>
+            ),
+          )}
+          <Button variant={asked.destructive ? 'destructive' : 'default'}>{asked.confirm}</Button>
+        </form>
+      )}
+    </Sheet>
+  );
+  return { ask, dialog };
+}
 const hidden = (p: string) => ['/admin', '/driver', '/staff'].some((x) => p.startsWith(x));
 /**
  * The browser pathname can differ from the server pathname when a deployment or service worker
@@ -228,17 +286,17 @@ export function StaffShell({
   const groups = role === 'admin'
     ? [
         { label: 'Overview', links: ['dashboard'] },
-        { label: 'Operations', links: ['drivers', 'vehicles', 'seat-layouts', 'routes', 'fares', 'trips', 'bookings', 'payments', 'payment-qr'] },
-        { label: 'Reports & settings', links: ['reports', 'tickets', 'website', 'settings'] },
+        { label: 'Operations', links: ['drivers', 'driver-requests', 'vehicles', 'seat-layouts', 'locations', 'routes', 'fares', 'trips', 'bookings', 'payments', 'payment-qr'] },
+        { label: 'Reports & settings', links: ['reports', 'audit', 'tickets', 'website', 'settings'] },
       ]
     : [
         { label: 'My workspace', links: ['profile', 'vehicles', 'routes', 'payment'] },
         { label: 'Trip management', links: ['schedule', 'trips', 'bookings', 'passengers'] },
         { label: 'Records', links: ['history'] },
       ];
-  const labels: Record<string, string> = { 'seat-layouts': 'seat layouts', 'payment-qr': 'payment accounts', schedule: 'publish route' };
+  const labels: Record<string, string> = { 'seat-layouts': 'seat layouts', 'payment-qr': 'payment accounts', schedule: 'publish route', 'driver-requests': 'driver changes', audit: 'audit log' };
   const icons: Record<string, React.ComponentType<{ size?: number }>> = {
-    dashboard: LayoutDashboard, drivers: Users, vehicles: CarFront, 'seat-layouts': LayoutDashboard, routes: Map, fares: WalletCards,
+    dashboard: LayoutDashboard, drivers: Users, 'driver-requests': FileText, locations: Map, audit: History, vehicles: CarFront, 'seat-layouts': LayoutDashboard, routes: Map, fares: WalletCards,
     trips: CalendarClock, bookings: BookOpen, payments: CreditCard, 'payment-qr': CreditCard, reports: BarChart3, tickets: Ticket,
     website: FileText, settings: Settings, profile: UserRound, payment: CreditCard, schedule: CalendarClock, passengers: Users, history: History,
   };

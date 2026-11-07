@@ -11,8 +11,7 @@ Requires Node.js 22+ and a PostgreSQL 15+ server that allows `CREATE EXTENSION b
 
 1. `npm install` (also generates the Prisma client).
 2. Copy `.env.example` to `.env` and set `DATABASE_URL`, `APP_ORIGIN`, `SESSION_SECRET` (32+ characters) and `CRON_SECRET`.
-   - No Docker, PostgreSQL installed locally: `npm run db:local` creates and starts a private, password-free cluster in `.localdb/` (git-ignored) on port 54329 and prints the `DATABASE_URL` to paste; `npm run db:local:stop` stops it.
-   - Docker: `docker compose up -d db` gives `postgresql://booking:booking@localhost:5432/booking`.
+   - No local PostgreSQL required: `npm run db:local` creates and starts a private, password-free cluster in `.localdb/` (git-ignored) on port 54329 and prints the `DATABASE_URL` to paste; `npm run db:local:stop` stops it.
    - Hosted database (Supabase, OVH, Railway, …): use the provider's connection string **and allow this machine's IP in the provider's firewall**. A `PrismaClientInitializationError` after ~5 seconds on every request means the host cannot be reached at all; run `npm run db:check` to see the reason.
 3. `npm run db:setup` applies all migrations and seeds the admin and a demo driver. The seed prints the sign-in details; placeholder values in `.env` mean the development defaults are used, and production refuses to seed without explicit `ADMIN_EMAIL`/`ADMIN_PASSWORD` (plus `DRIVER_*`).
 4. `npm run dev`, and in a second terminal `npm run worker` (releases expired holds and sends queued emails).
@@ -43,9 +42,10 @@ The admin creates each driver under *Drivers → Add*. Every driver gets a priva
 
 - **Live at once:** the driver's name, phone numbers, address, photo and password (`/driver/profile`). Email and licence details stay with the admin.
 - **Automatically active, with admin control:** vehicles and seat plans, routes with stops and prices, and payment QR accounts are validated and made active as soon as the driver posts them. Each is recorded under *Driver requests*, where an admin can reject or deactivate it and later activate it again. Places a driver types are added when the route is posted.
-- **Driver-created trips:** `/driver/schedule` takes the fare and arrival from the approved route, never from the request. Existing trips keep the price they were opened with. A trip with bookings can only be cancelled by the admin, who handles refunds.
+- **Driver-created trips:** `/driver/schedule` takes the arrival from the route. Publishing is all-or-nothing: every departure is checked against the driver's and the vehicle's other trips first, and a failure leaves nothing behind. One-off departures use the route price; a long-term schedule may set its own full-route fare. Existing trips keep the fares and stops they were opened with. Changing one trip, or pausing and resuming a schedule, never touches another trip or a trip the driver closed themselves.
 - **Fixed after registration:** a vehicle's seat plan, as for every vehicle.
-- **Payment proofs and refunds** are reviewed by the admin.
+- **Payments and cancellations:** the driver reviews payment proofs and cancels bookings on their own trips; the admin sees everything and can do the same. Any verified money on a cancelled booking becomes a refund record that the admin settles. A trip that still has bookings is cancelled by the admin, or by the driver once its bookings are cancelled.
+- **Seats:** a driver can block a free seat for one departure; sold or held seats cannot be blocked.
 - **Deactivating a driver** signs them out and closes booking on their scheduled trips.
 
 ## Sign-in and throttling policy
@@ -96,9 +96,9 @@ JPEG, PNG and WebP up to 5 MiB. The request stream is capped before parsing; Sha
 
 ## Production deployment
 
-**Docker (recommended):** `docker compose up -d --build` starts PostgreSQL, the web server (runs `prisma migrate deploy` on boot, listens on 3000, health-checked on `/api/health`) and the worker, with uploads on the `storage_data` volume. Put your real values in `.env` first; the compose file overrides `DATABASE_URL` and `STORAGE_DIR` for the containers. Seed once with `docker compose exec web npm run db:seed`.
-
 **Plain Node.js host:** `npm ci`, `npm run build`, `npm run db:migrate`, `npm run db:seed` (first time), then `npm start` for the web process and `npm run worker` under a supervisor that restarts it. Serve HTTPS through a reverse proxy, set `APP_ORIGIN` to the exact public origin, allow 6 MiB request bodies and streaming responses, and set `TRUST_PROXY=true` only when the proxy sets `x-real-ip`.
+
+**Vercel + Supabase:** set Vercel's `DATABASE_URL` to the Supabase Transaction Pooler (port 6543) with `pgbouncer=true`, `connection_limit=1`, and `connect_timeout=5`. From a trusted terminal, temporarily use the Direct connection or Session Pooler (port 5432) as `DATABASE_URL` when running `npx prisma migrate deploy`; never run `prisma migrate reset` against production. For durable uploads, create a private Supabase Storage bucket and set `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3`, `S3_FORCE_PATH_STYLE=true`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. Keep the S3 access keys server-only; the application serves authorized images through its API.
 
 Checklist before go-live: the database host is reachable from the app host (`npm run db:check`), `SESSION_SECRET`/`CRON_SECRET` are unique, SMTP (or SMS) is configured so passengers receive tickets and tracking codes, uploads use S3 or a persistent volume, backups and a tested restore exist, and `npm run test:all` is green against a staging database. Monitor `GET /api/health` (200 `{status:"ready",database:"up"}`, 503 when the database is down) and the worker.
 

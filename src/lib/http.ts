@@ -29,9 +29,11 @@ import {
 } from './security';
 import { serial, expire, reserve, submitProof, review } from './bookings';
 import { upload, readObject, multipart } from './storage';
-import { catalog, list, remove, save } from './admin';
+import { auditLog, catalog, list, remove, reportSummary, save } from './admin';
 import { matchJourney, seatStateFor, timeAtStop, type TripStop } from './inventory';
 import { resolveJourney } from './route-stops';
+import { searchTripIds } from './trip-search';
+import { NEPAL_MOBILE, NEPAL_MOBILE_MESSAGE, normalizePhone } from './phone';
 import {
   cancelOwnTrip,
   controlOwnSchedule,
@@ -41,6 +43,7 @@ import {
   deleteOwnResource,
   createOwnTrip,
   createOwnSchedules,
+  cancelOwnBooking,
   fleet,
   getProfile,
   driverDashboard,
@@ -48,17 +51,16 @@ import {
   listSubmissions,
   ownBookings,
   ownSchedules,
+  ownTrips,
   ownTripAvailability,
   reviewOwnPayment,
+  setOwnSeatBlocked,
   reviewSubmission,
   submit,
   updateOwnTrip,
   updateProfile,
 } from './driver-portal';
-const phone = z
-  .string()
-  .regex(/^(?:\+?977)?9[78][0-9]{8}$/)
-  .transform((v) => (v.startsWith('+') ? v : v.length === 13 ? '+' + v : '+977' + v));
+const phone = z.string().trim().regex(NEPAL_MOBILE, NEPAL_MOBILE_MESSAGE).transform(normalizePhone);
 const reservation = z.object({
   tripId: z.string().min(1),
   seats: z.array(z.string().min(1)).min(1).max(8),
@@ -106,14 +108,30 @@ function pagination(url: URL) {
     .max(100000)
     .parse(url.searchParams.get('page') || 1);
 }
+/** What the public may see of a vehicle: no internal notes, emergency contacts or owner ids. */
+const publicVehicle = {
+  select: {
+    id: true,
+    name: true,
+    registration: true,
+    type: true,
+    operator: true,
+    operatorContact: true,
+    description: true,
+    amenities: true,
+    active: true,
+    images: { orderBy: { position: 'asc' as const } },
+  },
+};
+const publicAssignments = {
+  where: { endedAt: null },
+  select: { driver: { select: { name: true, photoKey: true, active: true, status: true } } },
+};
 /** Search only needs seat counts, so it skips seat geometry and route stops. */
 const listInclude = {
-  vehicle: { include: { images: { orderBy: { position: 'asc' as const } } } },
+  vehicle: publicVehicle,
   route: { include: { origin: true, destination: true } },
-  assignments: {
-    where: { endedAt: null },
-    select: { driver: { select: { name: true, photoKey: true } } },
-  },
+  assignments: publicAssignments,
   seats: {
     select: {
       id: true,
@@ -127,7 +145,8 @@ const listInclude = {
   tripFares: true,
 };
 const tripInclude = {
-  vehicle: { include: { images: { orderBy: { position: 'asc' as const } } } },
+  vehicle: publicVehicle,
+  paymentQR: { select: { active: true } },
   route: {
     include: {
       origin: true,
@@ -135,10 +154,7 @@ const tripInclude = {
       stops: { include: { location: true }, orderBy: { position: 'asc' as const } },
     },
   },
-  assignments: {
-    where: { endedAt: null },
-    select: { driver: { select: { name: true, photoKey: true } } },
-  },
+  assignments: publicAssignments,
   seats: {
     include: {
       vehicleSeat: true,
@@ -153,6 +169,39 @@ const tripInclude = {
     },
   },
 };
+/** The trip fields shown to anyone; ownership, schedule and payment-account ids stay on the server. */
+function publicTrip<T extends { vehicle: { active: boolean }; assignments: { driver: { name: string; photoKey: string | null } }[] }>(t: T) {
+  const { operatorId, paymentQRId, scheduleId, recurringRule, stopSnapshot, segmentCount, ...rest } = t as T & Record<string, unknown>;
+  void [operatorId, paymentQRId, scheduleId, recurringRule, stopSnapshot, segmentCount];
+  const { active, ...vehicle } = t.vehicle;
+  void active;
+  return { ...rest, vehicle, assignments: t.assignments.map(({ driver }) => ({ driver: { name: driver.name, photoKey: driver.photoKey } })) };
+}
+/** Whether a passenger can book this trip right now. Mirrors the checks in reserve(). */
+function bookableNow(t: {
+  status: string;
+  bookingOpen: boolean;
+  bookingOpensAt: Date | null;
+  bookingClosesAt: Date | null;
+  departure: Date;
+  vehicle: { active: boolean };
+  route: { active: boolean };
+  paymentQR: { active: boolean };
+  assignments: { driver: { active: boolean; status: string } }[];
+}) {
+  const now = new Date();
+  return (
+    t.status === 'SCHEDULED' &&
+    t.bookingOpen &&
+    t.departure > now &&
+    t.vehicle.active &&
+    t.route.active &&
+    t.paymentQR.active &&
+    t.assignments.some(({ driver }) => driver.active && driver.status === 'ACTIVE') &&
+    (!t.bookingOpensAt || t.bookingOpensAt <= now) &&
+    (!t.bookingClosesAt || t.bookingClosesAt > now)
+  );
+}
 async function assigned(tripId: string, driverId: string) {
   const a = await db.tripDriverAssignment.findFirst({
     where: { tripId, driverId, endedAt: null },
@@ -232,12 +281,11 @@ export async function handle(req: Request, path: string[]) {
             select: { id: true, locationId: true, kind: true, name: true, landmark: true, extraMinutes: true },
           }),
         ]);
+        const { paymentQR, ...visible } = publicTrip(t);
+        void paymentQR;
         return json({
-          ...t,
-          bookingOpen:
-            t.bookingOpen &&
-            (!t.bookingOpensAt || t.bookingOpensAt <= new Date()) &&
-            (!t.bookingClosesAt || t.bookingClosesAt > new Date()),
+          ...visible,
+          bookingOpen: bookableNow(t),
           stops,
           journey: { from: journey.from, to: journey.to },
           fare: fares.find((f) => f.fromIdx === journey.from && f.toIdx === journey.to)?.amount ?? null,
@@ -272,39 +320,13 @@ export async function handle(req: Request, path: string[]) {
           lt: new Date(start.getTime() + 86400000),
         };
       }
-      const wantFrom = url.searchParams.get('origin') ?? '',
-        wantTo = url.searchParams.get('destination') ?? '';
-      const nameLike = (q: string) => ({ contains: q, mode: 'insensitive' as const });
-      const trips = await db.trip.findMany({
-        where: {
-          status: 'SCHEDULED',
-          bookingOpen: true,
-          assignments: { some: { endedAt: null, driver: { active: true, status: 'ACTIVE' } } },
-          AND: [
-            { OR: [{ bookingOpensAt: null }, { bookingOpensAt: { lte: new Date() } }] },
-            { OR: [{ bookingClosesAt: null }, { bookingClosesAt: { gt: new Date() } }] },
-          ],
-          vehicle: { active: true },
-          departure: range,
-          route: {
-            active: true,
-            AND: [
-              ...(wantFrom
-                ? [{ OR: [{ origin: { name: nameLike(wantFrom) } }, { stops: { some: { location: { name: nameLike(wantFrom) } } } }] }]
-                : []),
-              ...(wantTo
-                ? [{ OR: [{ destination: { name: nameLike(wantTo) } }, { stops: { some: { location: { name: nameLike(wantTo) } } } }] }]
-                : []),
-            ],
-          },
-        },
-        include: listInclude,
-        orderBy: { departure: 'asc' },
-        skip: (page - 1) * 25,
-        take: 26,
-      });
+      const wantFrom = url.searchParams.get('origin')?.slice(0, 120) ?? '',
+        wantTo = url.searchParams.get('destination')?.slice(0, 120) ?? '';
+      const found = await searchTripIds({ origin: wantFrom, destination: wantTo, from: range.gte as Date, to: range.lt as Date | undefined, page, size: 25 });
+      const rows = await db.trip.findMany({ where: { id: { in: found.ids } }, include: listInclude });
+      const trips = found.ids.flatMap((id) => rows.filter((t) => t.id === id));
       // A trip matches when the searched places appear on it in travel order, not only at its two ends.
-      const items = trips.slice(0, 25).flatMap((t) => {
+      const items = trips.flatMap((t) => {
         const stops = t.stopSnapshot as unknown as TripStop[];
         const journey = matchJourney(stops, wantFrom, wantTo);
         if (!journey) return [];
@@ -312,7 +334,7 @@ export async function handle(req: Request, path: string[]) {
           s.bookings.map((b) => ({ ...b.booking, fromIdx: b.fromIdx, toIdx: b.toIdx }));
         return [
           {
-            ...t,
+            ...publicTrip(t),
             seats: undefined,
             tripFares: undefined,
             stops,
@@ -324,10 +346,7 @@ export async function handle(req: Request, path: string[]) {
           },
         ];
       });
-      return json({
-        items,
-        nextPage: trips.length > 25 ? page + 1 : null,
-      });
+      return json({ items, nextPage: found.nextPage });
     }
     if (key === 'bookings' && method === 'POST') {
       await limit('book:' + clientKey(req), 50);
@@ -342,11 +361,25 @@ export async function handle(req: Request, path: string[]) {
       if (method === 'GET' && path.length === 2) {
         await serial((tx) => expire(tx, b.tripId));
         const current = await guest(b.id);
+        const stops = current.trip.stopSnapshot as unknown as TripStop[],
+          { active, maintenanceNote, emergencyContact, operatorId, layoutVersionId, ...vehicle } = current.trip.vehicle;
+        void [active, maintenanceNote, emergencyContact, operatorId, layoutVersionId];
         return json({
           ...current,
           accessHash: undefined,
           idempotencyKey: undefined,
           requestHash: undefined,
+          operatorId: undefined,
+          trip: { ...current.trip, vehicle, operatorId: undefined, paymentQRId: undefined, scheduleId: undefined, recurringRule: undefined, stopSnapshot: undefined },
+          // Times and places of this passenger's own journey, which may be only part of the route.
+          journey: {
+            from: stops[current.fromIdx]?.name ?? current.trip.route.origin.name,
+            to: stops[current.toIdx]?.name ?? current.trip.route.destination.name,
+            boardsAt: stops[current.fromIdx] ? timeAtStop(current.trip.departure, stops, current.fromIdx) : current.trip.departure,
+            dropsAt: stops[current.toIdx] ? timeAtStop(current.trip.departure, stops, current.toIdx) : current.trip.arrival,
+            boardingPoint: current.passengers[0]?.boardingPoint ?? current.trip.boardingPoint,
+            dropPoint: current.passengers[0]?.destination ?? current.trip.dropPoint,
+          },
           payment: current.payment ? { ...current.payment, reviewedById: undefined } : null,
         });
       }
@@ -788,6 +821,13 @@ export async function handle(req: Request, path: string[]) {
         if (!v) throw new ApiError(404, 'Vehicle not found.');
         return json(v);
       }
+      if (resource === 'audit-log' && method === 'GET')
+        return json(
+          await auditLog(pagination(url), {
+            q: url.searchParams.get('q')?.trim().slice(0, 100) || undefined,
+            action: url.searchParams.get('action')?.trim().slice(0, 80) || undefined,
+          }),
+        );
       if (resource === 'audit' && method === 'GET')
         return json(
           await db.auditLog.findMany({
@@ -799,52 +839,15 @@ export async function handle(req: Request, path: string[]) {
           }),
         );
       if (resource === 'reports' && method === 'GET') {
-        const days = z.coerce.number().int().refine((value) => [1, 7, 30].includes(value), 'Choose 1, 7, or 30 days.').parse(url.searchParams.get('days') || '1'),
-          since = new Date(Date.now() - days * 86400000),
-          t = {},
-          tripWindow = { departure: { gte: since } },
-          bookingWindow = { createdAt: { gte: since } },
-          viaBooking = { booking: bookingWindow };
-        const [vehicles, drivers, routes, tripsByStatus, bookingsByStatus, pending, revenue, refunds, driverRequests] = await Promise.all([
-          db.vehicle.count({ where: t }),
-          db.driver.count({ where: t }),
-          db.route.count({ where: t }),
-          db.trip.groupBy({ by: ['status'], where: tripWindow, _count: { _all: true } }),
-          db.booking.groupBy({ by: ['status'], where: bookingWindow, _count: { _all: true } }),
-          // Proofs of bookings that were cancelled meanwhile are no longer waiting for a decision.
-          db.payment.count({
-            where: { status: { in: ['SUBMITTED', 'UNDER_REVIEW'] }, booking: { ...bookingWindow, status: { notIn: ['CANCELLED', 'REJECTED'] } } },
-          }),
-          db.payment.aggregate({ where: { ...viaBooking, status: 'VERIFIED' }, _sum: { verifiedAmount: true } }),
-          db.bookingCancellation.count({ where: { createdAt: { gte: since }, refundStatus: { in: ['REVIEW_REQUIRED', 'PENDING', 'APPROVED'] } } }),
-          db.driverSubmission.count({ where: { status: 'PENDING' } }),
-        ]);
-        const trip = (s: string) => tripsByStatus.find((x) => x.status === s)?._count._all ?? 0,
-          booking = (s: string) => bookingsByStatus.find((x) => x.status === s)?._count._all ?? 0;
-        return json({
-          days,
-          vehicles,
-          drivers,
-          routes,
-          trips: tripsByStatus.reduce((n, x) => n + x._count._all, 0),
-          scheduledTrips: trip('SCHEDULED') + trip('BOARDING'),
-          completedTrips: trip('COMPLETED'),
-          cancelledTrips: trip('CANCELLED'),
-          bookings: bookingsByStatus.reduce((n, x) => n + x._count._all, 0),
-          confirmed: booking('CONFIRMED'),
-          cancelledBookings: booking('CANCELLED'),
-          pending,
-          reconciliation: booking('PAYMENT_RECONCILIATION_REQUIRED'),
-          openRefunds: refunds,
-          driverRequests,
-          revenue: revenue._sum.verifiedAmount || 0,
-        });
+        const days = z.coerce.number().int().refine((value) => [1, 7, 30].includes(value), 'Choose 1, 7, or 30 days.').parse(url.searchParams.get('days') || '1');
+        return json(await reportSummary(days));
       }
       if (method === 'GET') {
         const page = pagination(url),
           rows = await list(resource, page, null, {
             q: url.searchParams.get('q')?.trim().slice(0, 100) || undefined,
             status: url.searchParams.get('status') || undefined,
+            upcoming: url.searchParams.get('upcoming') === '1',
           });
         return json({ items: rows.slice(0, 25), nextPage: rows.length > 25 ? page + 1 : null });
       }
@@ -883,6 +886,13 @@ export async function handle(req: Request, path: string[]) {
         return json(await updateOwnTrip(driver.id, path[2], await body(req)));
       if (path[1] === 'trips' && path[2] && path[3] === 'availability' && method === 'GET')
         return json(await ownTripAvailability(driver.id, path[2]));
+      if (path[1] === 'trip-seats' && path[2] && method === 'PATCH')
+        return json(await setOwnSeatBlocked(driver.id, path[2], await body(req)));
+      if (path[1] === 'bookings' && path[2] && path[3] === 'cancel' && method === 'POST') {
+        const cancelled = await cancelOwnBooking(driver.id, path[2], await body(req));
+        void dispatchNotifications().catch(() => undefined);
+        return json(cancelled);
+      }
       if (path[1] === 'bookings' && method === 'GET')
         return json(await ownBookings(driver.id, { tripId: url.searchParams.get('tripId') || undefined, status: url.searchParams.get('status') || undefined }));
       if (path[1] === 'manual-bookings' && method === 'POST')
@@ -908,34 +918,7 @@ export async function handle(req: Request, path: string[]) {
       }
       if (path[1] === 'trips' && method === 'GET') {
         if (path[2]) await assigned(path[2], driver.id);
-        const days = path[2] ? null : z.coerce.number().int().refine((value) => [1, 7, 30].includes(value), 'Choose 1, 7, or 30 days.').parse(url.searchParams.get('days') || '30');
-        const starts = days ? new Date() : undefined,
-          ends = days ? new Date(Date.now() + days * 86400000) : undefined;
-        const trips = await db.trip.findMany({
-          where: {
-            id: path[2] || undefined,
-            assignments: { some: { driverId: driver.id, endedAt: null } },
-            ...(starts && ends ? { departure: { gte: starts, lt: ends } } : {}),
-          },
-          include: {
-            vehicle: true,
-            route: { include: { origin: true, destination: true } },
-            seats: { select: { id: true } },
-            bookings: {
-              where: { status: 'CONFIRMED' },
-              select: { id: true, seats: { where: { active: true }, select: { id: true } } },
-            },
-          },
-          orderBy: { departure: 'asc' },
-          take: 100,
-        });
-        return json({
-          items: trips.map((t) => ({
-            ...t,
-            confirmedPassengers: t.bookings.reduce((n, b) => n + b.seats.length, 0),
-            remainingSeats: t.seats.length - t.bookings.reduce((n, b) => n + b.seats.length, 0),
-          })),
-        });
+        return json({ items: await ownTrips(driver.id, path[2], url.searchParams.get('days') || '30') });
       }
       if (path[1] === 'passengers' && method === 'GET') {
         const id = url.searchParams.get('tripId');
