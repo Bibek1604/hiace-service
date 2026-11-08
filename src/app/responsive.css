@@ -411,8 +411,8 @@ textarea {
   }
 }
 
-/* Notched phones in landscape. */
-@media (orientation: landscape) {
+/* Notched phones in landscape. Laptops are landscape too, so this stops at tablet width. */
+@media (orientation: landscape) and (max-width: 1099px) {
   .header,
   .container,
   .site-footer {
@@ -458,6 +458,7 @@ body:has(.staff-shell) .site-footer {
   --space-card: clamp(1rem, 0.786rem + 1.07vw, 1.75rem); /* 16-28px */
   --space-gap: clamp(0.75rem, 0.536rem + 1.07vw, 1.5rem); /* 12-24px */
   --radius-card: clamp(0.875rem, 0.768rem + 0.536vw, 1.25rem); /* 14-20px */
+  --page-max: clamp(1120px, 80vw, 1360px); /* Page width, including --space-page on each side. */
   /* Darker than the original grey so secondary text reaches 4.5:1 on the tinted page backgrounds too. */
   --muted: #5a6a7e;
 }
@@ -466,6 +467,10 @@ body:has(.staff-shell) .site-footer {
   /* Text. */
   body {
     font-size: var(--text-body);
+  }
+  /* The browser default is 80% of its parent, which falls to about 10px inside captions. */
+  small {
+    font-size: var(--text-caption);
   }
   h1,
   h2,
@@ -562,6 +567,7 @@ body:has(.staff-shell) .site-footer {
   /* Buttons. */
   .button,
   .install-btn {
+    min-width: 44px;
     padding-inline: clamp(0.875rem, 0.7rem + 0.9vw, 1.5rem);
     font-size: var(--text-button);
     line-height: 1.3;
@@ -635,25 +641,57 @@ body:has(.staff-shell) .site-footer {
   }
 
   /* Page width and spacing. */
-  .header {
-    max-width: clamp(1180px, 82vw, 1420px);
+  .header:not(.home-header) {
+    max-width: var(--page-max);
   }
   .container:not(.narrow),
+  .hero-inner {
+    max-width: var(--page-max);
+  }
+  /* Header, hero, content and footer all start on the same left edge at every width. */
+  .header,
+  .container,
   .hero-inner,
+  .staff-content,
+  .site-footer {
+    padding-left: max(var(--space-page), env(safe-area-inset-left));
+    padding-right: max(var(--space-page), env(safe-area-inset-right));
+  }
+  .home-header {
+    padding-inline: max(var(--space-page), calc((100vw - var(--page-max)) / 2 + var(--space-page)));
+  }
   .site-footer-grid,
   .copyright {
-    max-width: clamp(1120px, 80vw, 1360px);
+    max-width: calc(var(--page-max) - 2 * var(--space-page));
   }
-  .container {
-    padding-left: var(--space-page);
-    padding-right: var(--space-page);
+
+  /* Short labels stay on one line: the row wraps instead of the words. */
+  .button,
+  .install-btn,
+  .site-footer .footer-btn,
+  .track-link {
+    white-space: nowrap;
   }
-  .staff-content {
-    padding-left: var(--space-page);
-    padding-right: var(--space-page);
+  .row > .button,
+  .row > button {
+    min-width: 44px;
+    white-space: normal;
+  }
+  .site-footer .footer-btn {
+    margin-bottom: 8px;
+  }
+  .times {
+    gap: clamp(6px, 1.4vw, 14px);
+  }
+  .times strong,
+  .times > .muted {
+    white-space: nowrap;
   }
 
   /* Colours that fell short of a readable 4.5:1. */
+  .home-header nav > a:first-child {
+    color: #eef6ff;
+  }
   .badge.paused {
     color: #75570a;
   }
@@ -674,6 +712,19 @@ body:has(.staff-shell) .site-footer {
     .install-btn:not(:disabled):hover {
       transform: none;
     }
+  }
+}
+
+/* Four fields in one row cut off their placeholders on a tablet. */
+@media screen and (min-width: 768px) and (max-width: 1099px) {
+  .search-form {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+/* The smallest phones cannot fit the date and the button side by side. */
+@media screen and (max-width: 380px) {
+  .search-form {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
