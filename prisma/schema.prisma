@@ -592,6 +592,12 @@ model StoredObject {
  createdAt DateTime @default(now())
 }
 
+/// Image bytes for deployments without S3 (serverless disks are temporary, so files saved there vanish).
+model StoredObjectData {
+ id String @id
+ data Bytes
+}
+
 model NotificationOutbox {
  id String @id @default(cuid())
  bookingId String

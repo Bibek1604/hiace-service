@@ -53,12 +53,14 @@ export function checkEnv(env: Env = process.env): EnvReport {
     warnings.push(
       'Object storage is partly configured (' + s3.join(', ') + '); uploads will fail until all S3 variables are set.',
     );
-  if (!env.S3_BUCKET)
+  if (!env.S3_BUCKET && env.STORAGE_DRIVER === 'local')
     warnings.push(
-      'S3_BUCKET is empty: uploads are stored on the local disk under ' +
+      'STORAGE_DRIVER is "local": uploads are stored on the local disk under ' +
         (env.STORAGE_DIR || './storage') +
-        '. Use a persistent volume or configure S3 for multi-instance deployments.',
+        '. Use a persistent volume; serverless hosts such as Vercel lose these files.',
     );
+  if (!env.S3_BUCKET && env.STORAGE_DRIVER === 'local' && env.VERCEL)
+    errors.push('STORAGE_DRIVER="local" cannot work on Vercel: its disk is temporary. Remove it or set S3_BUCKET.');
   const smtp = ['SMTP_HOST', 'MAIL_FROM'].filter((k) => env[k]);
   if (smtp.length === 1) warnings.push('Email needs both SMTP_HOST and MAIL_FROM; only ' + smtp[0] + ' is set.');
   const sms = ['SMS_HTTP_URL', 'SMS_HTTP_TOKEN'].filter((k) => env[k]);

@@ -34,7 +34,7 @@ function ImageField({ label, value, onChange }: { label: string; value: string; 
       <div className="row">
         <label className="btn-like">
           <ImagePlus size={16} /> {busy ? 'Uploading…' : 'Upload image'}
-          <input type="file" accept="image/jpeg,image/png,image/webp" hidden disabled={busy} onChange={(e) => pick(e.target.files?.[0])} />
+          <input type="file" accept="image/*" hidden disabled={busy} onChange={(e) => pick(e.target.files?.[0])} />
         </label>
         {value && (
           <img src={value} alt="" style={{ height: 44, borderRadius: 8, border: '1px solid var(--line)' }} />

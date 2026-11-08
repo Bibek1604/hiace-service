@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { api, Badge, Empty, ErrorBox, Skeleton, onForm, useAsk } from './common';
+import { saveImage } from '@/lib/image-client';
 import { SeatGridEditor } from './layouts';
 import { Button } from './ui/button';
 import { PasswordInput } from './ui/password-input';
@@ -79,10 +80,17 @@ async function uploadImage(file: File, purpose: 'driver' | 'vehicle' | 'qr') {
   return (await api<{ id: string }>('/api/driver/uploads', { method: 'POST', body: form })).id;
 }
 
-function Thumb({ id, onRemove }: { id: string; onRemove?: () => void }) {
+function Thumb({ id, onRemove, save }: { id: string; onRemove?: () => void; save?: string }) {
+  const [error, setError] = useState<unknown>(null);
   return (
     <div>
       <img src={'/api/images/' + id} alt="Uploaded" style={{ width: 90, height: 90, objectFit: 'contain' }} />
+      {save && (
+        <Button type="button" variant="outline" onClick={() => saveImage(id, save).catch(setError)}>
+          Save
+        </Button>
+      )}
+      {!!error && <ErrorBox error={error} />}
       {onRemove && (
         <Button type="button" variant="outline" onClick={onRemove}>
           Remove
@@ -169,7 +177,7 @@ export function DriverProfile() {
           Profile photo
           <input
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/*"
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void run(async () => setPhoto(await uploadImage(file, 'driver')), 'Photo uploaded. Save to keep it.');
@@ -312,7 +320,7 @@ function VehicleForm({ fleet, vehicle, onDone }: { fleet: Fleet; vehicle?: Vehic
         <input
           type="file"
           multiple
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/*"
           onChange={async (e) => {
             const files = Array.from(e.target.files ?? []);
             setBusy(true);
@@ -780,7 +788,7 @@ function PaymentForm({ qr, onDone }: { qr?: Qr; onDone: () => void }) {
         Payment QR image *
         <input
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/*"
           onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
@@ -799,7 +807,7 @@ function PaymentForm({ qr, onDone }: { qr?: Qr; onDone: () => void }) {
       <label>
         <input name="isDefault" type="checkbox" defaultChecked={qr?.isDefault} /> Use as my default QR for new trips
       </label>
-      {image && <Thumb id={image} />}
+      {image && <Thumb id={image} save="payment-qr.png" />}
       <ErrorBox error={error} />
       <div className="row">
         <Button disabled={busy}>{busy ? 'Working…' : qr ? 'Save account' : 'Add account'}</Button>
@@ -856,7 +864,7 @@ export function DriverPayment() {
               {r.accountName}
               {r.accountNumber ? ' · ' + r.accountNumber : ''}
             </p>
-            <Thumb id={r.imageKey} />
+            <Thumb id={r.imageKey} save={'payment-qr-' + r.label.replace(/[^a-z0-9]+/gi, '-') + '.png'} />
             {pendingFor(q.data, 'payment-qr', r.id) ? (
               <p className="muted">A change is waiting for approval.</p>
             ) : (

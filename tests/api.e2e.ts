@@ -107,6 +107,7 @@ before(async () => {
         PORT: String(PORT),
         APP_ORIGIN: BASE,
         STORAGE_DIR: storage,
+        STORAGE_DRIVER: 'local',
         S3_BUCKET: '',
         SMTP_HOST: '127.0.0.1',
         SMTP_PORT: String(smtpPort),

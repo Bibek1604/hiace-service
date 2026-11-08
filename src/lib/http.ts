@@ -15,6 +15,7 @@ import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { db } from './db';
+import sharp from 'sharp';
 import {
   ApiError,
   hash,
@@ -1016,16 +1017,24 @@ export async function handle(req: Request, path: string[]) {
         }
         if (!allowed) await guest(object.ownerId);
       }
-      const buffer = await readObject(object);
+      let buffer = await readObject(object),
+        mime = object.mime,
+        ext = 'webp';
+      // Phone galleries and wallet apps (eSewa, Khalti, mobile banking) read PNG everywhere; WebP is patchy.
+      if (url.searchParams.get('format') === 'png') {
+        buffer = await sharp(buffer).png().toBuffer();
+        mime = 'image/png';
+        ext = 'png';
+      }
+      const name = (object.purpose === 'qr' ? 'sajilo-yatra-payment-qr' : 'sajilo-yatra-' + object.purpose) + '.' + ext;
       return new Response(new Uint8Array(buffer), {
         headers: {
-          'Content-Type': object.mime,
+          'Content-Type': mime,
           'Content-Length': String(buffer.length),
           'Cache-Control':
-            object.purpose === 'proof' ? 'private, no-store' : 'public, max-age=3600',
+            object.purpose === 'proof' ? 'private, no-store' : 'public, max-age=86400, immutable',
           'Content-Disposition':
-            (url.searchParams.has('download') ? 'attachment' : 'inline') +
-            '; filename="sajilo-yatra.webp"',
+            (url.searchParams.has('download') ? 'attachment' : 'inline') + '; filename="' + name + '"',
           'X-Content-Type-Options': 'nosniff',
         },
       });

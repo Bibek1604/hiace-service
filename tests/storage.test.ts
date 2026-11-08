@@ -5,8 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deleteObject, readObject, storageDir, storageMode } from '../src/lib/storage';
 
-test('without S3_BUCKET the local disk driver is used and bad object references are rejected', async () => {
+test('without S3_BUCKET images go to the database unless the local disk driver is chosen', () => {
   delete process.env.S3_BUCKET;
+  delete process.env.STORAGE_DRIVER;
+  assert.equal(storageMode(), 'database');
+});
+
+test('STORAGE_DRIVER=local uses the disk and bad object references are rejected', async () => {
+  delete process.env.S3_BUCKET;
+  process.env.STORAGE_DRIVER = 'local';
   process.env.STORAGE_DIR = await mkdtemp(join(tmpdir(), 'sy-storage-'));
   assert.equal(storageMode(), 'local');
   assert.equal(storageDir(), process.env.STORAGE_DIR);
@@ -16,6 +23,7 @@ test('without S3_BUCKET the local disk driver is used and bad object references 
 
 test('a missing local object is a 404, a stored one is returned byte for byte and can be deleted', async () => {
   delete process.env.S3_BUCKET;
+  process.env.STORAGE_DRIVER = 'local';
   const dir = await mkdtemp(join(tmpdir(), 'sy-storage-'));
   process.env.STORAGE_DIR = dir;
   await assert.rejects(readObject({ id: 'missing-id', purpose: 'vehicle' }), (e: unknown) => (e as { status?: number }).status === 404);

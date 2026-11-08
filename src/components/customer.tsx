@@ -24,6 +24,7 @@ import { Button } from './ui/button';
 import { money, nepalTime, travelHours } from '@/lib/utils';
 import type { BookingView, TripView } from '@/lib/types';
 import { MAX_ROWS } from '@/lib/seat-layout';
+import { saveImage } from '@/lib/image-client';
 const dateLabel = (d: string) =>
   new Date(d).toLocaleDateString('en-GB', {
     timeZone: 'Asia/Kathmandu',
@@ -855,7 +856,7 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
             </div>
             <p className="muted">
               Save this QR to your phone, then open your banking or wallet app and select it from
-              your gallery.
+              your gallery. On a phone you can also press and hold the QR and choose Save image.
             </p>
             <img
               src={'/api/images/' + b.qrSnapshot.imageKey}
@@ -873,14 +874,7 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
                   </>
                 )}
               </p>
-              <a
-                className="button outline"
-                href={'/api/images/' + b.qrSnapshot.imageKey + '?download=1'}
-                download
-              >
-                <Download size={16} />
-                Save QR image
-              </a>
+              <SaveQrButton imageKey={b.qrSnapshot.imageKey} reference={b.reference} />
             </div>
             <p className="notice">{b.qrSnapshot.instructions}</p>
             <p>
@@ -896,22 +890,15 @@ export function BookingPage({ id, statusPage = false }: { id: string; statusPage
             </p>
             <form onSubmit={onForm(submit)} className="stack">
               <label>
-                Payment screenshot (JPEG, PNG, WebP · max 5 MB)
+                Payment screenshot or photo
                 <input
                   type="file"
                   name="image"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept="image/*"
                   required
                   onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f && f.size > 5 * 1024 * 1024) {
-                      setError(new Error('Choose a screenshot under 5 MB.'));
-                      e.target.value = '';
-                      setFile(null);
-                    } else {
-                      setFile(f || null);
-                      setError(null);
-                    }
+                    setFile(e.target.files?.[0] || null);
+                    setError(null);
                   }}
                 />
               </label>
@@ -1084,5 +1071,35 @@ export function TrackBooking() {
         </form>
       </div>
     </main>
+  );
+}
+
+/** Saves the payment QR as a PNG: the share sheet on iPhone (Save Image → Photos), a download elsewhere. */
+function SaveQrButton({ imageKey, reference }: { imageKey: string; reference: string }) {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState<unknown>(null);
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await saveImage(imageKey, 'payment-qr-' + reference + '.png');
+          } catch (e) {
+            setError(e);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Download size={16} />
+        {busy ? 'Saving…' : 'Save QR image'}
+      </Button>
+      {!!error && <ErrorBox error={error} />}
+    </>
   );
 }

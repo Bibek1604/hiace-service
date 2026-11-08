@@ -12,11 +12,14 @@ import { db } from './db';
 import { ApiError } from './security';
 
 /**
- * Object storage driver. S3 (or any S3-compatible service) is used when S3_BUCKET is set; otherwise
- * objects are kept on the local disk under STORAGE_DIR (default ./storage) so the application works
- * end to end without a bucket. Keys are always "<purpose>/<uuid>.webp" and both parts are validated.
+ * Object storage driver. S3 (or any S3-compatible service) is used when S3_BUCKET is set. Otherwise
+ * images are kept in the database, which survives serverless hosts such as Vercel whose disk is wiped
+ * between requests. STORAGE_DRIVER="local" keeps them on the local disk under STORAGE_DIR instead
+ * (a single long-running server with a persistent volume). Keys are always "<purpose>/<uuid>.webp"
+ * and both parts are validated.
  */
-export const storageMode = (): 's3' | 'local' => (process.env.S3_BUCKET ? 's3' : 'local');
+export const storageMode = (): 's3' | 'local' | 'database' =>
+  process.env.S3_BUCKET ? 's3' : process.env.STORAGE_DRIVER === 'local' ? 'local' : 'database';
 // The directory is configured at run time, so the bundler must not try to trace it (turbopackIgnore).
 export const storageDir = () => resolve(/*turbopackIgnore: true*/ process.env.STORAGE_DIR || 'storage');
 
@@ -25,6 +28,8 @@ function keyFor(purpose: string, id: string) {
   if (!SAFE.test(purpose) || !SAFE.test(id)) throw new ApiError(400, 'Invalid object reference.');
   return purpose + '/' + id + '.webp';
 }
+
+const idOf = (key: string) => key.slice(key.indexOf('/') + 1, -'.webp'.length);
 
 const client = () => {
   if (!process.env.S3_BUCKET || !process.env.S3_REGION)
@@ -49,6 +54,10 @@ async function putObject(key: string, body: Buffer) {
     );
     return;
   }
+  if (storageMode() === 'database') {
+    await db.storedObjectData.create({ data: { id: idOf(key), data: new Uint8Array(body) } });
+    return;
+  }
   await mkdir(join(storageDir(), key.split('/')[0]), { recursive: true });
   await writeFile(join(storageDir(), key), body, { flag: 'wx' });
 }
@@ -58,6 +67,11 @@ async function getObject(key: string): Promise<Buffer> {
     const result = await client().send(new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
     if (!result.Body) throw new ApiError(404, 'Image not found.');
     return Buffer.from(await result.Body.transformToByteArray());
+  }
+  if (storageMode() === 'database') {
+    const row = await db.storedObjectData.findUnique({ where: { id: idOf(key) } });
+    if (row) return Buffer.from(row.data);
+    // Images saved to disk before database storage existed are still served when the file is there.
   }
   try {
     return await readFile(join(storageDir(), key));
@@ -72,6 +86,7 @@ export async function deleteObject(key: string) {
     await client().send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
     return;
   }
+  if (storageMode() === 'database') await db.storedObjectData.deleteMany({ where: { id: idOf(key) } });
   await rm(join(storageDir(), key), { force: true });
 }
 

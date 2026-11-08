@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Button } from './ui/button';
 import { InstallApp } from './pwa';
+import { prepareImage } from '@/lib/image-client';
 import type { SiteContent } from '@/lib/site-content';
 /** A refused or failed API call. `reference` matches the requestId in the server logs. */
 export class ApiRequestError extends Error {
@@ -32,6 +33,13 @@ function messageForStatus(status: number) {
   return 'Something went wrong. Please try again.';
 }
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+  if (init?.body instanceof FormData) {
+    // Phone photos (HEIC, large camera shots, files without a type) are converted before they are sent.
+    const form = new FormData();
+    for (const [key, value] of init.body.entries())
+      form.append(key, value instanceof File && value.size ? await prepareImage(value) : value);
+    init = { ...init, body: form };
+  }
   if (init?.body instanceof FormData)
     for (const value of init.body.values())
       if (value instanceof File && value.size > MAX_UPLOAD_BYTES) throw new ApiRequestError(TOO_LARGE, 413);

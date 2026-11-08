@@ -321,7 +321,7 @@ export function ResourceForm({
               <>
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept="image/*"
                   multiple={f.type === 'images'}
                   onChange={(e) => image(f.key, e.target.files, f.type === 'images')}
                 />
