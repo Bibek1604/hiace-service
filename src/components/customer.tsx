@@ -8,6 +8,7 @@ import {
   BusFront,
   ArrowRight,
   ArrowLeft,
+  ArrowLeftRight,
   Clock3,
   Armchair,
   CircleGauge,
@@ -87,6 +88,30 @@ export function SearchForm({ initial = {} }: { initial?: Record<string, string> 
           {copy.search.button} <ArrowRight size={17} />
         </Button>
       </form>
+      <div className="search-quick">
+        <button
+          type="button"
+          className="chip"
+          disabled={!origin && !destination}
+          onClick={() => {
+            setOrigin(destination);
+            setDestination(origin);
+          }}
+        >
+          <ArrowLeftRight size={14} /> Swap from and to
+        </button>
+        {[
+          ['Today', 0],
+          ['Tomorrow', 1],
+        ].map(([label, add]) => {
+          const value = new Date(Date.now() + Number(add) * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kathmandu' });
+          return (
+            <button key={label} type="button" className={'chip' + (date === value ? ' active' : '')} aria-pressed={date === value} onClick={() => setDate(date === value ? '' : value)}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
       <datalist id="search-locations">
         {locations.data?.map((location) => <option key={location.id} value={location.name} />)}
       </datalist>

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { BusFront, ShieldCheck, Armchair, ArrowRight, MapPin, Route, CheckCircle2 } from 'lucide-react';
-import { SearchForm, TripResults } from '@/components/customer';
+import { SearchForm } from '@/components/customer';
+import { HomeDepartures } from '@/components/home-departures';
 import { getSiteContent } from '@/lib/site-content-db';
 import { nepalDateString } from '@/lib/nepal-time';
 export const dynamic = 'force-dynamic';
@@ -85,17 +86,13 @@ export default async function Home() {
             <div>
               <p className="eyebrow">TODAY · {todayLabel.toUpperCase()}</p>
               <h2 className="display">Hiace available today</h2>
-              <p className="muted">Departures still to leave today. Pick one to choose your seats.</p>
+              <p className="muted">Pick a day and a route, then tap a ride to choose your seats. No account needed.</p>
             </div>
             <Link href="/search" className="blue row">
               {copy.home.allRides} <ArrowRight size={16} />
             </Link>
           </div>
-          <TripResults
-            home
-            filters={'date=' + today}
-            emptyText="No more Hiace departures today. See the coming days for the next available rides."
-          />
+          <HomeDepartures today={today} />
         </section>
         <div className="notice" style={{ marginTop: 40, padding: 25 }}>
           <div className="row">
