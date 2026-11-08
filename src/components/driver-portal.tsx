@@ -5,6 +5,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { api, Badge, Empty, ErrorBox, Skeleton, onForm, useAsk } from './common';
 import { saveImage } from '@/lib/image-client';
 import { SeatGridEditor } from './layouts';
+import { CopyTripLink } from './share-link';
 import { Button } from './ui/button';
 import { PasswordInput } from './ui/password-input';
 import { money, travelHours } from '@/lib/utils';
@@ -1192,6 +1193,9 @@ export function DriverSchedule() {
               <a className="button" href={'/driver/bookings?tripId=' + t.id + '&manual=1'}>Add passenger booking</a>
               <a className="button outline" href={'/driver/bookings?tripId=' + t.id}>View bookings</a>
               <Button variant="outline" onClick={() => cancel(t)}>Cancel trip</Button>
+            </div>
+            <div className="row">
+              <CopyTripLink tripId={t.id} title={t.route.origin.name + ' → ' + t.route.destination.name + ' · ' + nepal(t.departure)} />
             </div>
             <details>
               <summary>Edit schedule and booking window</summary>

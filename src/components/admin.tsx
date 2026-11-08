@@ -6,6 +6,7 @@ import { Plus, CheckCircle2, Download, Search, X } from 'lucide-react';
 import { adminApi, api, Badge, ErrorBox, Sheet, Skeleton, StaffLink as Link, onForm } from './common';
 import { BookingDetail, TicketCheck, TripCancel } from './bookings';
 import { Button } from './ui/button';
+import { CopyTripLink } from './share-link';
 import { PasswordInput } from './ui/password-input';
 import { fields } from '@/lib/form-fields';
 import { money, travelHours } from '@/lib/utils';
@@ -689,6 +690,12 @@ export function AdminResource({
                       <a className="button outline" href={adminApi('trips/' + row.id + '/manifest')} download>
                         <Download size={15} /> Manifest
                       </a>
+                    )}
+                    {resource === 'trips' && str(row.status) === 'SCHEDULED' && (
+                      <CopyTripLink
+                        tripId={row.id}
+                        title={display(row.route) + ' · ' + new Date(str(row.departure)).toLocaleString('en-GB', { timeZone: 'Asia/Kathmandu' })}
+                      />
                     )}
                     {resource === 'trips' && writable && ['SCHEDULED', 'BOARDING'].includes(str(row.status)) && (
                       <Button

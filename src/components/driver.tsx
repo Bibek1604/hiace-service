@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { Phone, CheckCircle2, BusFront } from 'lucide-react';
 import { api, Badge, ErrorBox, Skeleton, Empty, onForm, useAsk } from './common';
 import { Button } from './ui/button';
+import { CopyTripLink } from './share-link';
 type DriverTrip = {
   id: string;
   departure: string;
@@ -97,9 +98,17 @@ export function DriverTrips() {
                   <dd>{t.remainingSeats}</dd>
                 </div>
               </dl>
-              <Link className="button" href={'/driver/trips/' + t.id}>
-                Open passenger manifest →
-              </Link>
+              <div className="row">
+                <Link className="button" href={'/driver/trips/' + t.id}>
+                  Open passenger manifest →
+                </Link>
+                {t.status === 'SCHEDULED' && (
+                  <CopyTripLink
+                    tripId={t.id}
+                    title={t.route.origin.name + ' → ' + t.route.destination.name + ' · ' + new Date(t.departure).toLocaleString('en-GB', { timeZone: 'Asia/Kathmandu' })}
+                  />
+                )}
+              </div>
             </div>
           ))}
           {!q.data?.items.length && <Empty text="No assigned trips" />}

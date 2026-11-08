@@ -25,6 +25,7 @@ import { money, nepalTime, travelHours } from '@/lib/utils';
 import type { BookingView, TripView } from '@/lib/types';
 import { MAX_ROWS } from '@/lib/seat-layout';
 import { saveImage } from '@/lib/image-client';
+import { CopyTripLink } from './share-link';
 const dateLabel = (d: string) =>
   new Date(d).toLocaleDateString('en-GB', {
     timeZone: 'Asia/Kathmandu',
@@ -379,6 +380,14 @@ export function TripDetail({ id, from: firstFrom = '', to: firstTo = '' }: { id:
         <span className="muted">
           {dateLabel(t.departure)} · {nepalTime(t.departure)}
         </span>
+      </div>
+      <div className="row" style={{ marginTop: 12 }}>
+        <CopyTripLink
+          tripId={t.id}
+          journey={journey.from && journey.to ? journey : undefined}
+          title={here!.name + ' → ' + there!.name + ' · ' + dateLabel(t.boardsAt) + ', ' + nepalTime(t.boardsAt)}
+          label="Copy link to this ride"
+        />
       </div>
       <div className="card">
         <h2>{t.vehicle.name}</h2>
