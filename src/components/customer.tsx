@@ -167,7 +167,7 @@ export function TripCard({ trip: t }: { trip: TripView }) {
     </article>
   );
 }
-export function TripResults({ filters = '', home = false }: { filters?: string; home?: boolean }) {
+export function TripResults({ filters = '', home = false, emptyText }: { filters?: string; home?: boolean; emptyText?: string }) {
   const copy = useSite().copy;
   const [page, setPage] = useState(1);
   const q = useQuery({
@@ -186,7 +186,7 @@ export function TripResults({ filters = '', home = false }: { filters?: string; 
             <Skeleton />
           </>
         ) : q.data?.items.length ? (
-          (home ? q.data.items.slice(0, 4) : q.data.items).map((t) => (
+          q.data.items.map((t) => (
             <TripCard key={t.id} trip={t} />
           ))
         ) : q.error ? (
@@ -194,17 +194,11 @@ export function TripResults({ filters = '', home = false }: { filters?: string; 
         ) : (
           <Empty
             text={copy.search.emptyTitle}
-            detail={
-              home
-                ? copy.search.emptyHome
-                : copy.search.emptySearch
-            }
+            detail={emptyText ?? (home ? copy.search.emptyHome : copy.search.emptySearch)}
           >
-            {!home && (
-              <Link href="/search" className="button">
-                Clear search
-              </Link>
-            )}
+            <Link href="/search" className="button">
+              {home ? 'See upcoming rides' : 'Clear search'}
+            </Link>
             <Link href="/track-booking" className="button outline">
               Track a booking
             </Link>

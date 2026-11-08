@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { BusFront, ArrowRight, ShieldCheck, Ticket, Search, House, LogOut, ChevronLeft, Menu, BarChart3, BookOpen, CalendarClock, CarFront, CreditCard, FileText, LayoutDashboard, Map, Settings, UserRound, Users, WalletCards, History } from 'lucide-react';
+import { BusFront, ArrowRight, ShieldCheck, Ticket, Search, House, LogOut, ChevronLeft, Menu, BarChart3, BookOpen, CalendarClock, CalendarDays, CarFront, CreditCard, MapPin, FileText, LayoutDashboard, Map, Settings, UserRound, Users, WalletCards, History } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -259,6 +259,8 @@ export function Footer({ site }: { site: SiteContent }) {
   const f = site.footer,
     t = site.copy.nav;
   return (
+    <>
+    {path && path !== '/' && !path.startsWith('/staff') && <BookingSteps />}
     <footer className="site-footer">
       <div className="site-footer-grid">
         <div>
@@ -308,6 +310,25 @@ export function Footer({ site }: { site: SiteContent }) {
         &copy; {new Date().getFullYear()} {f.copyright}
       </p>
     </footer>
+    </>
+  );
+}
+/** How booking works, shown above the footer on every public page except the home page. */
+function BookingSteps() {
+  return (
+    <section className="container journey-steps" aria-labelledby="journey-steps-title">
+      <div className="section-title">
+        <div>
+          <p className="eyebrow">SIMPLE BOOKING</p>
+          <h2 className="display" id="journey-steps-title">Book your seat in three clear steps</h2>
+        </div>
+      </div>
+      <div className="journey-step-grid">
+        <div className="journey-step"><span className="step-number">1</span><MapPin size={22} /><h3>Choose your route</h3><p>Search your departure, destination, and travel date.</p></div>
+        <div className="journey-step"><span className="step-number">2</span><CalendarDays size={22} /><h3>Select a departure</h3><p>Compare available trips, timings, and seats before you continue.</p></div>
+        <div className="journey-step"><span className="step-number">3</span><CreditCard size={22} /><h3>Pay and travel</h3><p>Pay by QR, upload the proof, and keep your ticket ready.</p></div>
+      </div>
+    </section>
   );
 }
 /** Operator permissions for showing or hiding actions; null means every permission (platform admin). */

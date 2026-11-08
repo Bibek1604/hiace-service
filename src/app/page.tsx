@@ -1,12 +1,16 @@
 import Link from 'next/link';
-import { BusFront, ShieldCheck, Armchair, ArrowRight, MapPin, Route, CalendarDays, CreditCard, CheckCircle2 } from 'lucide-react';
+import { BusFront, ShieldCheck, Armchair, ArrowRight, MapPin, Route, CheckCircle2 } from 'lucide-react';
 import { SearchForm, TripResults } from '@/components/customer';
 import { getSiteContent } from '@/lib/site-content-db';
+import { nepalDateString } from '@/lib/nepal-time';
 export const dynamic = 'force-dynamic';
 const icons = [Armchair, ShieldCheck, BusFront, Route];
 export default async function Home() {
-  const { hero, search, benefits, departures, track, copy } = await getSiteContent();
+  const { hero, search, benefits, track, copy } = await getSiteContent();
   const photos = hero.photos.filter((p) => p.src);
+  const now = new Date(),
+    today = nepalDateString(now),
+    todayLabel = now.toLocaleDateString('en-GB', { timeZone: 'Asia/Kathmandu', weekday: 'long', day: 'numeric', month: 'long' });
   return (
     <>
       <section className="hero">
@@ -58,19 +62,6 @@ export default async function Home() {
         </div>
       </div>
       <main className="container">
-        <section className="journey-steps" aria-labelledby="journey-steps-title">
-          <div className="section-title">
-            <div>
-              <p className="eyebrow">SIMPLE BOOKING</p>
-              <h2 className="display" id="journey-steps-title">Book your seat in three clear steps</h2>
-            </div>
-          </div>
-          <div className="journey-step-grid">
-            <div className="journey-step"><span className="step-number">1</span><MapPin size={22} /><h3>Choose your route</h3><p>Search your departure, destination, and travel date.</p></div>
-            <div className="journey-step"><span className="step-number">2</span><CalendarDays size={22} /><h3>Select a departure</h3><p>Compare available trips, timings, and seats before you continue.</p></div>
-            <div className="journey-step"><span className="step-number">3</span><CreditCard size={22} /><h3>Pay and travel</h3><p>Pay by QR, upload the proof, and keep your ticket ready.</p></div>
-          </div>
-        </section>
         <div className="benefits">
           {benefits
             .filter((b) => b.title)
@@ -92,15 +83,19 @@ export default async function Home() {
         <section>
           <div className="section-title">
             <div>
-              <p className="eyebrow">{departures.eyebrow.toUpperCase()}</p>
-              <h2 className="display">{departures.heading}</h2>
-              <p className="muted">{departures.text}</p>
+              <p className="eyebrow">TODAY · {todayLabel.toUpperCase()}</p>
+              <h2 className="display">Hiace available today</h2>
+              <p className="muted">Departures still to leave today. Pick one to choose your seats.</p>
             </div>
             <Link href="/search" className="blue row">
               {copy.home.allRides} <ArrowRight size={16} />
             </Link>
           </div>
-          <TripResults home />
+          <TripResults
+            home
+            filters={'date=' + today}
+            emptyText="No more Hiace departures today. See the coming days for the next available rides."
+          />
         </section>
         <div className="notice" style={{ marginTop: 40, padding: 25 }}>
           <div className="row">
